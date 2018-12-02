@@ -56,7 +56,7 @@ class JSONFileDataLoader(FileDataLoader):
         self.word_vec_mat = np.load(word_vec_mat_file_name)
         self.word2id = json.load(open(word2id_file_name))
         self.rel2id = json.load(open(rel2id_file_name))
-        self.rel_tot = len(self.rel2id) + 1
+        self.rel_tot = len(self.rel2id)
         if self.data_word.shape[1] != self.max_length:
             print("Pre-processed files don't match current settings. Reprocessing...")
             return False
@@ -157,7 +157,7 @@ class JSONFileDataLoader(FileDataLoader):
             self.data_label = np.zeros((self.instance_tot), dtype=np.int32)
             self.rel2scope = {} # left close right open
             self.rel2id = {}
-            self.rel_tot = 1
+            self.rel_tot = 0
             i = 0
             for relation in self.ori_data:
                 self.rel2scope[relation] = [i, i]
