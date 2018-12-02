@@ -29,17 +29,21 @@ class JSONFileDataLoader(FileDataLoader):
         pos2_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_pos2.npy')
         mask_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_mask.npy')
         length_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_length.npy')
+        label_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_label.npy')
         rel2scope_file_name = os.path.join(processed_data_dir, name_prefix + '_rel2scope.json')
         word_vec_mat_file_name = os.path.join(processed_data_dir, word_vec_name_prefix + '_mat.npy')
         word2id_file_name = os.path.join(processed_data_dir, word_vec_name_prefix + '_word2id.json')
+        rel2id_file_name = os.path.join(processed_data_dir, name_prefix + '_rel2id.json')
         if not os.path.exists(word_npy_file_name) or \
            not os.path.exists(pos1_npy_file_name) or \
            not os.path.exists(pos2_npy_file_name) or \
            not os.path.exists(mask_npy_file_name) or \
            not os.path.exists(length_npy_file_name) or \
+           not os.path.exists(label_npy_file_name) or \
            not os.path.exists(rel2scope_file_name) or \
            not os.path.exists(word_vec_mat_file_name) or \
-           not os.path.exists(word2id_file_name):
+           not os.path.exists(word2id_file_name) or \
+           not os.path.exists(rel2id_file_name):
             return False
         print("Pre-processed files exist. Loading them...")
         self.data_word = np.load(word_npy_file_name)
@@ -47,9 +51,12 @@ class JSONFileDataLoader(FileDataLoader):
         self.data_pos2 = np.load(pos2_npy_file_name)
         self.data_mask = np.load(mask_npy_file_name)
         self.data_length = np.load(length_npy_file_name)
+        self.data_label = np.load(label_npy_file_name)
         self.rel2scope = json.load(open(rel2scope_file_name))
         self.word_vec_mat = np.load(word_vec_mat_file_name)
         self.word2id = json.load(open(word2id_file_name))
+        self.rel2id = json.load(open(rel2id_file_name))
+        self.rel_tot = len(self.rel2id) + 1
         if self.data_word.shape[1] != self.max_length:
             print("Pre-processed files don't match current settings. Reprocessing...")
             return False
@@ -147,10 +154,15 @@ class JSONFileDataLoader(FileDataLoader):
             self.data_pos2 = np.zeros((self.instance_tot, self.max_length), dtype=np.int32)
             self.data_mask = np.zeros((self.instance_tot, self.max_length), dtype=np.int32)
             self.data_length = np.zeros((self.instance_tot), dtype=np.int32)
+            self.data_label = np.zeros((self.instance_tot), dtype=np.int32)
             self.rel2scope = {} # left close right open
+            self.rel2id = {}
+            self.rel_tot = 1
             i = 0
             for relation in self.ori_data:
                 self.rel2scope[relation] = [i, i]
+                self.rel2id[relation] = rel_tot
+                rel_tot += 1
                 for ins in self.ori_data[relation]:
                     head = ins['h'][0]
                     tail = ins['t'][0]
@@ -167,6 +179,7 @@ class JSONFileDataLoader(FileDataLoader):
                     for j in range(j + 1, max_length):
                         cur_ref_data_word[j] = BLANK
                     self.data_length[i] = len(words)
+                    self.data_label[i] = self.rel2id[relation]
                     if len(words) > max_length:
                         self.data_length[i] = max_length
                     if pos1 >= max_length:
@@ -202,12 +215,97 @@ class JSONFileDataLoader(FileDataLoader):
             np.save(os.path.join(processed_data_dir, name_prefix + '_pos2.npy'), self.data_pos2)
             np.save(os.path.join(processed_data_dir, name_prefix + '_mask.npy'), self.data_mask)
             np.save(os.path.join(processed_data_dir, name_prefix + '_length.npy'), self.data_length)
+            np.save(os.path.join(processed_data_dir, name_prefix + '_label.npy'), self.data_label)
             json.dump(self.rel2scope, open(os.path.join(processed_data_dir, name_prefix + '_rel2scope.json'), 'w'))
             np.save(os.path.join(processed_data_dir, word_vec_name_prefix + '_mat.npy'), self.word_vec_mat)
             json.dump(self.word2id, open(os.path.join(processed_data_dir, word_vec_name_prefix + '_word2id.json'), 'w'))
+            json.dump(self.rel2id, open(os.path.join(processed_data_dir, name_prefix + '_rel2id.json'), 'w'))
             print("Finish storing")
 
-    def next_one(self, N, K, Q):
+        self.index = list(range(self.instance_tot))
+        random.shuffle(self.index)
+        self.current = 0
+
+    def next_batch(self, batch_size):
+        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+        if self.current + batch_size > len(self.index):
+            self.index = list(range(self.instance_tot))
+            random.shuffle(self.index)
+            self.current = 0
+        current_index = self.index[self.current:self.current+batch_size]
+        self.current += batch_size
+
+        batch['word'] = Variable(torch.from_numpy(self.data_word[current_index]).long()) 
+        batch['pos1'] = Variable(torch.from_numpy(self.data_pos1[current_index]).long())
+        batch['pos2'] = Variable(torch.from_numpy(self.data_pos2[current_index]).long())
+        batch['mask'] = Variable(torch.from_numpy(self.data_mask[current_index]).long())
+        batch['label']=Variable(torch.from_numpy(self.data_label[current_index]).long())
+
+        # To cuda
+        if self.cuda:
+            for key in batch:
+                batch[key] = batch[key].cuda()
+
+        return batch
+
+    def next_new_relation(self, train_data_loader, support_size, query_size, query_class):
+        '''
+        support_size: The num of instances for positive / negative. The total support size is support_size * 2.
+        query_size: The num of instances for ONE class in query set. The total query size is query_size * query_class.
+        query_class: The num of classes in query (include the positive class).
+        '''
+        target_classes = random.sample(self.rel2scope.keys(), query_class) # 0 class is the new relation 
+        support_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+        query_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'label': []}
+
+        # New relation
+        scope = self.rel2scope[target_classes[0]]
+        indices = np.random.choice(list(range(scope[0], scope[1])), support_size + query_size, False)
+        support_word, query_word, _ = np.split(self.data_word, [support_size, support_size + query_size])
+        support_pos1, query_pos1, _ = np.split(self.data_pos1, [support_size, support_size + query_size])
+        support_pos2, query_pos2, _ = np.split(self.data_pos2, [support_size, support_size + query_size])
+        support_mask, query_mask, _ = np.split(self.data_mask, [support_size, support_size + query_size])
+
+        negative_support = train_data_loader.next_batch(support_size)
+        support_set['word'] = np.concatenate(support_word, negative_support['word'], 0)
+        support_set['pos1'] = np.concatenate(support_pos1, negative_support['pos1'], 0)
+        support_set['pos2'] = np.concatenate(support_pos2, negative_support['pos2'], 0)
+        support_set['mask'] = np.concatenate(support_mask, negative_support['mask'], 0)
+        support_set['label'] = np.concatenate(np.ones((support_size), dtype=np.int32), np.zeros((support_size), dtype=np.int32))
+
+        query_set['word'].append(query_word)
+        query_set['pos1'].append(query_pos1) 
+        query_set['pos2'].append(query_pos2)
+        query_set['mask'].append(query_mask)
+        query_set['label'] += [1] * query_size
+
+        # Other query classes (negative)
+        for i, class_name in enumerate(target_classes[1:]):
+            scope = self.rel2scope[class_name]
+            indices = np.random.choice(list(range(scope[0], scope[1])), query_size, False)
+            query_set['word'].append(self.data_word[indices])
+            query_set['pos1'].append(self.data_pos1[indices])
+            query_set['pos2'].append(self.data_pos2[indices])
+            query_set['mask'].append(self.data_mask[indices])
+            query_set['label'] += [0] * query_size
+
+        query_set['word'] = np.concatenate(query_set['word'], 0)
+        query_set['pos1'] = np.concatenate(query_set['pos1'], 0)
+        query_set['pos2'] = np.concatenate(query_set['pos2'], 0)
+        query_set['mask'] = np.concatenate(query_set['mask'], 0)
+        query_set['label'] = np.array(query_label)
+
+        perm = np.random.permutation(N * Q)
+        query_set['word'] = query_set['word'][perm]
+        query_set['pos1'] = query_set['pos1'][perm]
+        query_set['pos2'] = query_set['pos2'][perm]
+        query_set['mask'] = query_set['mask'][perm]
+        query_set['label'] = query_set['label'][perm]
+
+        return support_set, query_set
+
+    '''
+    def next_one(self, N):
         target_classes = random.sample(self.rel2scope.keys(), N)
         support_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
         query_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
@@ -287,3 +385,4 @@ class JSONFileDataLoader(FileDataLoader):
             label = label.cuda()
 
         return support, query, label
+    '''

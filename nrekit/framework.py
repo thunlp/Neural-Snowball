@@ -10,7 +10,7 @@ from torch import autograd, optim, nn
 from torch.autograd import Variable
 from torch.nn import functional as F
 
-class FewShotREModel(nn.Module):
+class Model(nn.Module):
     def __init__(self, sentence_encoder):
         '''
         sentence_encoder: Sentence encoder
@@ -19,38 +19,34 @@ class FewShotREModel(nn.Module):
         '''
         nn.Module.__init__(self)
         self.sentence_encoder = sentence_encoder
-        self.cost = nn.CrossEntropyLoss()
+        self.cost = nn.BCELoss(size_average=True)
+        self._loss = 0
+        self._accuracy = 0
     
-    def forward(self, support, query, N, K, Q):
-        '''
-        support: Inputs of the support set.
-        query: Inputs of the query set.
-        N: Num of classes
-        K: Num of instances for each class in the support set
-        Q: Num of instances for each class in the query set
-        return: logits, pred
-        '''
+    def forward_base(self, data):
         raise NotImplementedError
 
-    def loss(self, logits, label):
-        '''
-        logits: Logits with the size (..., class_num)
-        label: Label with whatever size. 
-        return: [Loss] (A single value)
-        '''
-        N = logits.size(-1)
-        return self.cost(logits.view(-1, N), label.view(-1))
+    def forward_new(self, data):
+        raise NotImplementedError
 
-    def accuracy(self, pred, label):
+    def __loss__(self, logits, label):
+        return self.cost(logits.view(-1), label.view(-1))
+
+    def __accuracy__(self, pred, label):
         '''
         pred: Prediction results with whatever size
         label: Label with whatever size
         return: [Accuracy] (A single value)
         '''
         return torch.mean((pred.view(-1) == label.view(-1)).type(torch.FloatTensor))
-
     
-class FewShotREFramework:
+    def loss():
+        return self._loss
+    
+    def accuracy():
+        return self._accuracy
+    
+class Framework:
 
     def __init__(self, train_data_loader, val_data_loader, test_data_loader):
         '''
@@ -86,7 +82,7 @@ class FewShotREFramework:
     def train(self,
               model,
               model_name,
-              B, N_for_train, N_for_eval, K, Q,
+              batch_size=100,
               ckpt_dir='./checkpoint',
               test_result_dir='./test_result',
               learning_rate=1e-1,
@@ -143,13 +139,12 @@ class FewShotREFramework:
         iter_sample = 0.0
         for it in range(start_iter, start_iter + train_iter):
             scheduler.step()
-            support, query, label = self.train_data_loader.next_batch(B, N_for_train, K, Q)
-            logits, pred = model(support, query, N_for_train, K, Q)
-            loss = model.loss(logits, label)
-            right = model.accuracy(pred, label)
+            batch_data = self.train_data_loader.next_batch(batch_size)
+            logits, pred = model.forward_base(batch_data)
+            loss = model.loss()
+            right = model.accuracy()
             optimizer.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm(parameters_to_optimize, 10)
             optimizer.step()
             
             iter_loss += self.item(loss.data)
@@ -164,7 +159,7 @@ class FewShotREFramework:
                 iter_sample = 0.
 
             if (it + 1) % val_step == 0:
-                acc = self.eval(model, B, N_for_eval, K, Q, val_iter)
+                acc = self.eval(model, eval_iter=val_iter)
                 model.train()
                 if acc > best_acc:
                     print('Best checkpoint')
@@ -176,13 +171,13 @@ class FewShotREFramework:
                 
         print("\n####################\n")
         print("Finish training " + model_name)
-        test_acc = self.eval(model, B, N_for_eval, K, Q, test_iter, ckpt=os.path.join(ckpt_dir, model_name + '.pth.tar'))
+        test_acc = self.eval(model, ckpt=os.path.join(ckpt_dir, model_name + '.pth.tar'), eval_iter=test_iter)
         print("Test accuracy: {}".format(test_acc))
 
     def eval(self,
             model,
-            B, N, K, Q,
-            eval_iter,
+            support_size=10, query_size=10, query_class=10,
+            eval_iter=1000,
             ckpt=None): 
         '''
         model: a FewShotREModel instance
@@ -206,9 +201,9 @@ class FewShotREFramework:
         iter_right = 0.0
         iter_sample = 0.0
         for it in range(eval_iter):
-            support, query, label = eval_dataset.next_batch(B, N, K, Q)
-            logits, pred = model(support, query, N, K, Q)
-            right = model.accuracy(pred, label)
+            support, query = eval_dataset.next_batch(support_size, query_size, query_class)
+            model(support, query)
+            right = model.accuracy()
             iter_right += self.item(right.data)
             iter_sample += 1
 
