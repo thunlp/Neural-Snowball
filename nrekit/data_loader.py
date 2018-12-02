@@ -56,6 +56,7 @@ class JSONFileDataLoader(FileDataLoader):
         self.word_vec_mat = np.load(word_vec_mat_file_name)
         self.word2id = json.load(open(word2id_file_name))
         self.rel2id = json.load(open(rel2id_file_name))
+        self.instance_tot = self.data_word.shape[0]
         self.rel_tot = len(self.rel2id)
         if self.data_word.shape[1] != self.max_length:
             print("Pre-processed files don't match current settings. Reprocessing...")
@@ -161,13 +162,13 @@ class JSONFileDataLoader(FileDataLoader):
             i = 0
             for relation in self.ori_data:
                 self.rel2scope[relation] = [i, i]
-                self.rel2id[relation] = rel_tot
-                rel_tot += 1
+                self.rel2id[relation] = self.rel_tot
+                self.rel_tot += 1
                 for ins in self.ori_data[relation]:
-                    head = ins['h'][0]
-                    tail = ins['t'][0]
-                    pos1 = ins['h'][2][0][0]
-                    pos2 = ins['t'][2][0][0]
+                    head = ins['h']['name']
+                    tail = ins['t']['name']
+                    pos1 = ins['h']['pos'][0][0]
+                    pos2 = ins['t']['pos'][0][0]
                     words = ins['tokens']
                     cur_ref_data_word = self.data_word[i]         
                     for j, word in enumerate(words):
@@ -267,11 +268,11 @@ class JSONFileDataLoader(FileDataLoader):
         support_mask, query_mask, _ = np.split(self.data_mask, [support_size, support_size + query_size])
 
         negative_support = train_data_loader.next_batch(support_size)
-        support_set['word'] = np.concatenate(support_word, negative_support['word'], 0)
-        support_set['pos1'] = np.concatenate(support_pos1, negative_support['pos1'], 0)
-        support_set['pos2'] = np.concatenate(support_pos2, negative_support['pos2'], 0)
-        support_set['mask'] = np.concatenate(support_mask, negative_support['mask'], 0)
-        support_set['label'] = np.concatenate(np.ones((support_size), dtype=np.int32), np.zeros((support_size), dtype=np.int32))
+        support_set['word'] = np.concatenate((support_word, negative_support['word']), 0)
+        support_set['pos1'] = np.concatenate((support_pos1, negative_support['pos1']), 0)
+        support_set['pos2'] = np.concatenate((support_pos2, negative_support['pos2']), 0)
+        support_set['mask'] = np.concatenate((support_mask, negative_support['mask']), 0)
+        support_set['label'] = np.concatenate((np.ones((support_size), dtype=np.int32), np.zeros((support_size), dtype=np.int32)), 0)
 
         query_set['word'].append(query_word)
         query_set['pos1'].append(query_pos1) 
@@ -293,14 +294,26 @@ class JSONFileDataLoader(FileDataLoader):
         query_set['pos1'] = np.concatenate(query_set['pos1'], 0)
         query_set['pos2'] = np.concatenate(query_set['pos2'], 0)
         query_set['mask'] = np.concatenate(query_set['mask'], 0)
-        query_set['label'] = np.array(query_label)
+        query_set['label'] = np.array(query_set['label'])
 
-        perm = np.random.permutation(N * Q)
-        query_set['word'] = query_set['word'][perm]
-        query_set['pos1'] = query_set['pos1'][perm]
-        query_set['pos2'] = query_set['pos2'][perm]
-        query_set['mask'] = query_set['mask'][perm]
-        query_set['label'] = query_set['label'][perm]
+        support_set['word'] = Variable(torch.from_numpy(support_set['word']).long()) 
+        support_set['pos1'] = Variable(torch.from_numpy(support_set['pos1']).long())
+        support_set['pos2'] = Variable(torch.from_numpy(support_set['pos2']).long())
+        support_set['mask'] = Variable(torch.from_numpy(support_set['mask']).long())
+        support_set['label'] = Variable(torch.from_numpy(support_set['label']).long())
+
+        query_set['word'] = Variable(torch.from_numpy(query_set['word']).long()) 
+        query_set['pos1'] = Variable(torch.from_numpy(query_set['pos1']).long())
+        query_set['pos2'] = Variable(torch.from_numpy(query_set['pos2']).long())
+        query_set['mask'] = Variable(torch.from_numpy(query_set['mask']).long())
+        query_set['label'] = Variable(torch.from_numpy(query_set['label']).long())
+
+        # To cuda
+        if self.cuda:
+            for key in support_set:
+                support_set[key] = support_set[key].cuda()
+            for key in query_set:
+                query_set[key] = query_set[key].cuda()
 
         return support_set, query_set
 
