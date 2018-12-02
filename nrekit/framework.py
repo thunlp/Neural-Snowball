@@ -40,10 +40,10 @@ class Model(nn.Module):
         '''
         return torch.mean((pred.view(-1) == label.view(-1)).type(torch.FloatTensor))
     
-    def loss():
+    def loss(self):
         return self._loss
     
-    def accuracy():
+    def accuracy(self):
         return self._accuracy
     
 class Framework:
@@ -82,11 +82,11 @@ class Framework:
     def train(self,
               model,
               model_name,
-              batch_size=100,
+              batch_size=500,
               ckpt_dir='./checkpoint',
               test_result_dir='./test_result',
-              learning_rate=1e-1,
-              lr_step_size=20000,
+              learning_rate=1.,
+              lr_step_size=200000000,
               weight_decay=1e-5,
               train_iter=30000,
               val_iter=1000,
@@ -129,7 +129,7 @@ class Framework:
 
         if cuda:
             model = model.cuda()
-        model.train()
+        # model.train()
 
         # Training
         best_acc = 0
@@ -140,7 +140,7 @@ class Framework:
         for it in range(start_iter, start_iter + train_iter):
             scheduler.step()
             batch_data = self.train_data_loader.next_batch(batch_size)
-            logits, pred = model.forward_base(batch_data)
+            model.forward_base(batch_data)
             loss = model.loss()
             right = model.accuracy()
             optimizer.zero_grad()
@@ -176,7 +176,7 @@ class Framework:
 
     def eval(self,
             model,
-            support_size=10, query_size=10, query_class=10,
+            support_size=10, query_size=10, query_class=2,
             eval_iter=1000,
             ckpt=None): 
         '''
@@ -190,7 +190,7 @@ class Framework:
         return: Accuracy
         '''
         print("")
-        model.eval()
+        # model.eval()
         if ckpt is None:
             eval_dataset = self.val_data_loader
         else:
@@ -201,8 +201,8 @@ class Framework:
         iter_right = 0.0
         iter_sample = 0.0
         for it in range(eval_iter):
-            support, query = eval_dataset.next_batch(support_size, query_size, query_class)
-            model(support, query)
+            support, query = eval_dataset.next_new_relation(self.train_data_loader, support_size, query_size, query_class)
+            model.forward_new((support, query))
             right = model.accuracy()
             iter_right += self.item(right.data)
             iter_sample += 1
