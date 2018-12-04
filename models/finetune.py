@@ -5,6 +5,7 @@ import torch
 from torch import autograd, optim, nn
 from torch.autograd import Variable
 from torch.nn import functional as F
+import numpy as np
 
 class Finetune(nrekit.framework.Model):
     
@@ -58,5 +59,7 @@ class Finetune(nrekit.framework.Model):
         pred = torch.zeros((x.size(0))).long().cuda()
         pred[x > 0.5] = 1
         self._accuracy = self.__accuracy__(pred, query['label'])
-    
-    
+        pred = pred.view(-1).data.cpu().numpy()
+        label = query['label'].view(-1).data.cpu().numpy()
+        self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
+        self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)

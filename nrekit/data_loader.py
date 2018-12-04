@@ -165,10 +165,10 @@ class JSONFileDataLoader(FileDataLoader):
                 self.rel2id[relation] = self.rel_tot
                 self.rel_tot += 1
                 for ins in self.ori_data[relation]:
-                    head = ins['h']['name']
-                    tail = ins['t']['name']
-                    pos1 = ins['h']['pos'][0][0]
-                    pos2 = ins['t']['pos'][0][0]
+                    head = ins['h'][0]
+                    tail = ins['t'][0]
+                    pos1 = ins['h'][2][0][0]
+                    pos2 = ins['t'][2][0][0]
                     words = ins['tokens']
                     cur_ref_data_word = self.data_word[i]         
                     for j, word in enumerate(words):
@@ -249,7 +249,40 @@ class JSONFileDataLoader(FileDataLoader):
 
         return batch
 
-    def next_new_relation(self, train_data_loader, support_size, query_size, query_class):
+    def next_multi_class(self, num_size, num_class):
+        '''
+        num_size: The num of instances for ONE class. The total size is num_size * num_classes.
+        num_class: The num of classes (include the positive class).
+        '''
+        target_classes = random.sample(self.rel2scope.keys(), num_class)
+        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+
+        for i, class_name in enumerate(target_classes):
+            scope = self.rel2scope[class_name]
+            indices = np.random.choice(list(range(scope[0], scope[1])), num_size, False)
+            batch['word'].append(self.data_word[indices])
+            batch['pos1'].append(self.data_pos1[indices])
+            batch['pos2'].append(self.data_pos2[indices])
+            batch['mask'].append(self.data_mask[indices])
+
+        batch['word'] = np.concatenate(batch['word'], 0)
+        batch['pos1'] = np.concatenate(batch['pos1'], 0)
+        batch['pos2'] = np.concatenate(batch['pos2'], 0)
+        batch['mask'] = np.concatenate(batch['mask'], 0)
+
+        batch['word'] = Variable(torch.from_numpy(batch['word']).long()) 
+        batch['pos1'] = Variable(torch.from_numpy(batch['pos1']).long())
+        batch['pos2'] = Variable(torch.from_numpy(batch['pos2']).long())
+        batch['mask'] = Variable(torch.from_numpy(batch['mask']).long())
+
+        # To cuda
+        if self.cuda:
+            for key in batch:
+                batch[key] = batch[key].cuda()
+
+        return batch
+
+    def next_new_relation(self, train_data_loader, support_size, query_size, unlabelled_size, query_class, negative_rate=1):
         '''
         support_size: The num of instances for positive / negative. The total support size is support_size * 2.
         query_size: The num of instances for ONE class in query set. The total query size is query_size * query_class.
@@ -258,16 +291,17 @@ class JSONFileDataLoader(FileDataLoader):
         target_classes = random.sample(self.rel2scope.keys(), query_class) # 0 class is the new relation 
         support_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
         query_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'label': []}
+        unlabelled_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
 
         # New relation
         scope = self.rel2scope[target_classes[0]]
-        indices = np.random.choice(list(range(scope[0], scope[1])), support_size + query_size, False)
-        support_word, query_word, _ = np.split(self.data_word, [support_size, support_size + query_size])
-        support_pos1, query_pos1, _ = np.split(self.data_pos1, [support_size, support_size + query_size])
-        support_pos2, query_pos2, _ = np.split(self.data_pos2, [support_size, support_size + query_size])
-        support_mask, query_mask, _ = np.split(self.data_mask, [support_size, support_size + query_size])
+        indices = np.random.choice(list(range(scope[0], scope[1])), support_size + query_size + unlabelled_size, False)
+        support_word, query_word, unlabelled_word, _ = np.split(self.data_word[indices], [support_size, support_size + query_size, support_size + query_size + unlabelled_size])
+        support_pos1, query_pos1, unlabelled_pos1, _ = np.split(self.data_pos1[indices], [support_size, support_size + query_size, support_size + query_size + unlabelled_size])
+        support_pos2, query_pos2, unlabelled_pos2, _ = np.split(self.data_pos2[indices], [support_size, support_size + query_size, support_size + query_size + unlabelled_size])
+        support_mask, query_mask, unlabelled_mask, _ = np.split(self.data_mask[indices], [support_size, support_size + query_size, support_size + query_size + unlabelled_size])
 
-        negative_support = train_data_loader.next_batch(support_size)
+        negative_support = train_data_loader.next_batch(support_size * negative_rate)
         support_set['word'] = np.concatenate((support_word, negative_support['word']), 0)
         support_set['pos1'] = np.concatenate((support_pos1, negative_support['pos1']), 0)
         support_set['pos2'] = np.concatenate((support_pos2, negative_support['pos2']), 0)
@@ -280,21 +314,41 @@ class JSONFileDataLoader(FileDataLoader):
         query_set['mask'].append(query_mask)
         query_set['label'] += [1] * query_size
 
+        unlabelled_set['word'].append(unlabelled_word)
+        unlabelled_set['pos1'].append(unlabelled_pos1) 
+        unlabelled_set['pos2'].append(unlabelled_pos2)
+        unlabelled_set['mask'].append(unlabelled_mask)
+
         # Other query classes (negative)
         for i, class_name in enumerate(target_classes[1:]):
             scope = self.rel2scope[class_name]
-            indices = np.random.choice(list(range(scope[0], scope[1])), query_size, False)
-            query_set['word'].append(self.data_word[indices])
-            query_set['pos1'].append(self.data_pos1[indices])
-            query_set['pos2'].append(self.data_pos2[indices])
-            query_set['mask'].append(self.data_mask[indices])
+            indices = np.random.choice(list(range(scope[0], scope[1])), query_size + unlabelled_size, False)
+            query_word, unlabelled_word, _ = np.split(self.data_word[indices], [query_size, query_size + unlabelled_size])  
+            query_pos1, unlabelled_pos1, _ = np.split(self.data_pos1[indices], [query_size, query_size + unlabelled_size])    
+            query_pos2, unlabelled_pos2, _ = np.split(self.data_pos2[indices], [query_size, query_size + unlabelled_size])    
+            query_mask, unlabelled_mask, _ = np.split(self.data_mask[indices], [query_size, query_size + unlabelled_size])    
+
+            query_set['word'].append(query_word)
+            query_set['pos1'].append(query_pos1)
+            query_set['pos2'].append(query_pos2)
+            query_set['mask'].append(query_mask)
             query_set['label'] += [0] * query_size
+
+            unlabelled_set['word'].append(unlabelled_word)
+            unlabelled_set['pos1'].append(unlabelled_pos1)
+            unlabelled_set['pos2'].append(unlabelled_pos2)
+            unlabelled_set['mask'].append(unlabelled_mask)
 
         query_set['word'] = np.concatenate(query_set['word'], 0)
         query_set['pos1'] = np.concatenate(query_set['pos1'], 0)
         query_set['pos2'] = np.concatenate(query_set['pos2'], 0)
         query_set['mask'] = np.concatenate(query_set['mask'], 0)
         query_set['label'] = np.array(query_set['label'])
+
+        unlabelled_set['word'] = np.concatenate(unlabelled_set['word'], 0)
+        unlabelled_set['pos1'] = np.concatenate(unlabelled_set['pos1'], 0)
+        unlabelled_set['pos2'] = np.concatenate(unlabelled_set['pos2'], 0)
+        unlabelled_set['mask'] = np.concatenate(unlabelled_set['mask'], 0)
 
         support_set['word'] = Variable(torch.from_numpy(support_set['word']).long()) 
         support_set['pos1'] = Variable(torch.from_numpy(support_set['pos1']).long())
@@ -308,14 +362,21 @@ class JSONFileDataLoader(FileDataLoader):
         query_set['mask'] = Variable(torch.from_numpy(query_set['mask']).long())
         query_set['label'] = Variable(torch.from_numpy(query_set['label']).long())
 
+        unlabelled_set['word'] = Variable(torch.from_numpy(unlabelled_set['word']).long()) 
+        unlabelled_set['pos1'] = Variable(torch.from_numpy(unlabelled_set['pos1']).long())
+        unlabelled_set['pos2'] = Variable(torch.from_numpy(unlabelled_set['pos2']).long())
+        unlabelled_set['mask'] = Variable(torch.from_numpy(unlabelled_set['mask']).long())
+ 
         # To cuda
         if self.cuda:
             for key in support_set:
                 support_set[key] = support_set[key].cuda()
             for key in query_set:
                 query_set[key] = query_set[key].cuda()
+            for key in unlabelled_set:
+                unlabelled_set[key] = unlabelled_set[key].cuda()
 
-        return support_set, query_set
+        return support_set, query_set, unlabelled_set
 
     '''
     def next_one(self, N):
