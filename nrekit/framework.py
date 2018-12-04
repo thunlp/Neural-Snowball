@@ -89,12 +89,13 @@ class Framework:
               lr_step_size=200000000,
               weight_decay=1e-5,
               train_iter=30000,
-              val_iter=1000,
+              val_iter=100,
               val_step=2000,
               test_iter=3000,
               cuda=True,
               pretrain_model=None,
-              optimizer=optim.SGD):
+              optimizer=optim.SGD,
+              model2=None):
         '''
         model: a FewShotREModel instance
         model_name: Name of the model
@@ -118,8 +119,13 @@ class Framework:
         
         # Init
         parameters_to_optimize = filter(lambda x:x.requires_grad, model.parameters())
-        optimizer = optimizer(parameters_to_optimize, learning_rate, weight_decay=weight_decay)
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=lr_step_size)
+        opt = optimizer(parameters_to_optimize, learning_rate, weight_decay=weight_decay)
+        scheduler = optim.lr_scheduler.StepLR(opt, step_size=lr_step_size)
+        if model2 is not None:
+            parameters_to_optimize2 = filter(lambda x:x.requires_grad, model2.parameters())
+            opt2 = optimizer(parameters_to_optimize2, learning_rate, weight_decay=weight_decay)
+            scheduler2 = optim.lr_scheduler.StepLR(opt2, step_size=lr_step_size)
+
         if pretrain_model:
             checkpoint = self.__load_model__(pretrain_model)
             model.load_state_dict(checkpoint['state_dict'])
@@ -129,6 +135,7 @@ class Framework:
 
         if cuda:
             model = model.cuda()
+            model2 = model2.cuda()
         # model.train()
 
         # Training
@@ -137,21 +144,47 @@ class Framework:
         iter_loss = 0.0
         iter_right = 0.0
         iter_sample = 0.0
+        iter_loss2 = 0.0
+        iter_right2 = 0.0
+        iter_sample2 = 0.0
+
+        s_num_size = 10
+        s_num_class = 50
+
         for it in range(start_iter, start_iter + train_iter):
             scheduler.step()
             batch_data = self.train_data_loader.next_batch(batch_size)
             model.forward_base(batch_data)
             loss = model.loss()
             right = model.accuracy()
-            optimizer.zero_grad()
+            opt.zero_grad()
             loss.backward()
-            optimizer.step()
+            opt.step()
             
             iter_loss += self.item(loss.data)
             iter_right += self.item(right.data)
             iter_sample += 1
-            sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%'.format(it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample) +'\r')
-            sys.stdout.flush()
+
+            if (model2 is not None):
+                scheduler2.step()
+                batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
+                model2(batch_data, s_num_size, s_num_class)
+                loss2 = model2._loss
+                right2 = model2._accuracy
+                opt2.zero_grad()
+                loss2.backward()
+                opt2.step()
+
+                iter_loss2 += self.item(loss2.data)
+                iter_right2 += self.item(right2.data)
+                iter_sample2 += 1
+                sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}% | loss2: {3:2.6f}, accuracy2: {4:3.2f}%'.format( \
+                    it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample, \
+                    iter_loss2 / iter_sample2, 100 * iter_right2 / iter_sample2) +'\r')
+                sys.stdout.flush()
+            else:
+                sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%'.format(it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample) +'\r')
+                sys.stdout.flush()
 
             if it % val_step == 0:
                 iter_loss = 0.
@@ -159,8 +192,10 @@ class Framework:
                 iter_sample = 0.
 
             if (it + 1) % val_step == 0:
+                self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.5)
+                self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.9)
+                self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.95)
                 acc = self.eval(model, eval_iter=val_iter)
-                model.train()
                 if acc > best_acc:
                     print('Best checkpoint')
                     if not os.path.exists(ckpt_dir):
@@ -176,9 +211,12 @@ class Framework:
 
     def eval(self,
             model,
-            support_size=10, query_size=10, query_class=2,
+            support_size=10, query_size=10, unlabelled_size=50, query_class=2,
+            s_num_size=10, s_num_class=50,
             eval_iter=1000,
-            ckpt=None): 
+            ckpt=None,
+            is_model2=False,
+            threshold=0.5):
         '''
         model: a FewShotREModel instance
         B: Batch size
@@ -199,15 +237,25 @@ class Framework:
             eval_dataset = self.test_data_loader
 
         iter_right = 0.0
+        iter_prec = 0.0
+        iter_recall = 0.0
         iter_sample = 0.0
         for it in range(eval_iter):
-            support, query = eval_dataset.next_new_relation(self.train_data_loader, support_size, query_size, query_class)
-            model.forward_new((support, query))
-            right = model.accuracy()
-            iter_right += self.item(right.data)
+            if is_model2:
+                batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
+                model(batch_data, s_num_size, s_num_class, threshold=threshold)
+            else: 
+                batch_data = eval_dataset.next_new_relation(self.train_data_loader, support_size, query_size, unlabelled_size, query_class)
+                model.forward_new(batch_data, threshold=threshold)
+            iter_right += model._accuracy
+            iter_prec += model._prec
+            iter_recall += model._recall
             iter_sample += 1
-
-            sys.stdout.write('[EVAL] step: {0:4} | accuracy: {1:3.2f}%'.format(it + 1, 100 * iter_right / iter_sample) +'\r')
+            if hasattr(model, '_snowball'):
+                snowball_cnt = model._snowball
+            else:
+                snowball_cnt = -1
+            sys.stdout.write('[EVAL t={0}] step: {1:4} | accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5}'.format(threshold, it + 1, 100 * iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, snowball_cnt) +'\r')
             sys.stdout.flush()
         print("")
         return iter_right / iter_sample
