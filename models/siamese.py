@@ -18,12 +18,35 @@ class Siamese(nn.Module):
         self.cost = nn.BCELoss(reduction="none")
         self._accuracy = 0.0
 
+    def forward_snowball_style(self, data, positive_support_size, threshold=0.5):
+        support, query, unlabelled = data
+
+        x = self.sentence_encoder(support)[:positive_support_size]
+        y = self.sentence_encoder(unlabelled)
+        assert(y.size(0) == 50 * 5)
+        unlabelled_size = y.size(0)
+        x = x.unsqueeze(1)
+        y = y.unsqueeze(0)
+        dis = torch.pow(x - y, 2).view(-1, self.hidden_size)
+        score = F.sigmoid(self.fc(dis).squeeze())
+        label = torch.zeros((positive_support_size, unlabelled_size)).long().cuda()
+        label[:, :50] = 1
+        label = label.view(-1)
+        self._loss = self.cost(score, label.float()).mean()
+        pred = torch.zeros((score.size(0))).long().cuda()
+        pred[score > threshold] = 1
+        self._accuracy = torch.mean((pred == label).type(torch.FloatTensor))
+        self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
+        self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
+
     def forward(self, data, num_size, num_class, threshold=0.5):
         x = self.sentence_encoder(data).contiguous().view(num_class, num_size, -1)
         x1 = x[:, :num_size/2].contiguous().view(-1, self.hidden_size)
         x2 = x[:, num_size/2:].contiguous().view(-1, self.hidden_size)
-        y1 = x[:num_class/2].contiguous().view(-1, self.hidden_size)
-        y2 = x[num_class/2:].contiguous().view(-1, self.hidden_size)
+        y1 = x[:num_class/2,:].contiguous().view(-1, self.hidden_size)
+        y2 = x[num_class/2:,:].contiguous().view(-1, self.hidden_size)
+        # y1 = x[0].contiguous().unsqueeze(0).expand(x.size(0) - 1, -1, -1).contiguous().view(-1, self.hidden_size)
+        # y2 = x[1:].contiguous().view(-1, self.hidden_size)
         label = torch.zeros((x1.size(0) + y1.size(0))).long().cuda()
         label[:x1.size(0)] = 1
         z1 = torch.cat([x1, y1], 0)
@@ -37,10 +60,9 @@ class Siamese(nn.Module):
         self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
         self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
 
-    def forward_infer(self, x, y, threshold=0.5):
-        x = self.sentence_encoder(x)
-        support_size = x.size(0) / 2
-        x = x[:support_size]
+    def forward_infer(self, x, y, support_size, threshold=0.5):
+        x = self.sentence_encoder(x)[:support_size]
+        # support_size = x.size(0)
         y = self.sentence_encoder(y)
         x = x.unsqueeze(1)
         y = y.unsqueeze(0)
@@ -76,7 +98,7 @@ class Snowball(nrekit.framework.Model):
         _, pred = x.max(-1)
         self._accuracy = self.__accuracy__(pred, data['label'])
 
-    def forward_new(self, data, threshold=0.5):
+    def forward_new(self, data, positive_support_size, threshold=0.5):
         support, query, unlabelled = data
         new_W = Variable(self.fc.weight.mean(0) / 1e3, requires_grad=True)
         new_bias = Variable(torch.zeros((1)), requires_grad=True)
@@ -87,11 +109,16 @@ class Snowball(nrekit.framework.Model):
         # Expand
         support_x = self.sentence_encoder(support) # (batch_size, hidden_size)
         unlabelled_x = self.sentence_encoder(unlabelled)
-        similar = self.siamese_model.forward_infer(support, unlabelled, threshold=0.95)
+        similar = self.siamese_model.forward_infer(support, unlabelled, support_size=positive_support_size, threshold=0.95)
         chosen = []
+        correct_snowball = 0
+        assert(similar.size(0) == 50 * 5)
         for i in range(similar.size(0)):
             if similar[i] == 1:
                 chosen.append(unlabelled_x[i])
+                if i <= 50:
+                    correct_snowball += 1
+        self._correct_snowball = correct_snowball
         self._snowball = similar.sum()
         if similar.sum() > 0:
             chosen = torch.stack(chosen, 0)
@@ -116,6 +143,7 @@ class Snowball(nrekit.framework.Model):
             x = F.sigmoid(x)
             iter_loss_array = self.__loss__(x, label.float())
             iter_loss = iter_loss_array.mean()
+            optimizer.zero_grad()
             iter_loss.backward(retain_graph=True)
             optimizer.step()
         
@@ -133,3 +161,39 @@ class Snowball(nrekit.framework.Model):
         label = query['label'].view(-1).data.cpu().numpy()
         self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
         self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
+
+    def forward_baseline(self, data):
+        support, query, unlabelled = data
+        new_W = Variable(self.fc.weight.mean(0) / 1e3, requires_grad=True)
+        new_bias = Variable(torch.zeros((1)), requires_grad=True)
+        optimizer = optim.Adam([new_W, new_bias], 1e-1, weight_decay=0)
+        new_W = new_W.cuda()
+        new_bias = new_bias.cuda()
+
+        # Finetune
+        support_x = self.sentence_encoder(support) # (batch_size, hidden_size)
+        support_x = self.drop(support_x)
+        for i in range(10):
+            x = torch.matmul(support_x, new_W) + new_bias # (batch_size, 1)
+            x = F.sigmoid(x)
+            iter_loss_array = self.__loss__(x, support['label'].float())
+            iter_loss = iter_loss_array.mean()
+            optimizer.zero_grad()
+            iter_loss.backward(retain_graph=True)
+            optimizer.step()
+        
+        # Test
+        query_x = self.sentence_encoder(query) # (batch_size, hidden_size)
+        query_x = self.drop(query_x)
+        x = torch.matmul(query_x, new_W) + new_bias # (batch_size, 1)
+        x = F.sigmoid(x)
+        loss_array = self.__loss__(x, query['label'].float())
+        self._baseline_loss = loss_array.mean()
+        pred = torch.zeros((x.size(0))).long().cuda()
+        pred[x > 0.5] = 1
+        self._baseline_accuracy = self.__accuracy__(pred, query['label'])
+        pred = pred.view(-1).data.cpu().numpy()
+        label = query['label'].view(-1).data.cpu().numpy()
+        self._baseline_prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
+        self._baseline_recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
+

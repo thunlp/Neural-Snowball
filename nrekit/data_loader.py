@@ -282,7 +282,7 @@ class JSONFileDataLoader(FileDataLoader):
 
         return batch
 
-    def next_new_relation(self, train_data_loader, support_size, query_size, unlabelled_size, query_class, negative_rate=1):
+    def next_new_relation(self, train_data_loader, support_size, query_size, unlabelled_size, query_class, negative_rate=5):
         '''
         support_size: The num of instances for positive / negative. The total support size is support_size * 2.
         query_size: The num of instances for ONE class in query set. The total query size is query_size * query_class.
@@ -306,7 +306,7 @@ class JSONFileDataLoader(FileDataLoader):
         support_set['pos1'] = np.concatenate((support_pos1, negative_support['pos1']), 0)
         support_set['pos2'] = np.concatenate((support_pos2, negative_support['pos2']), 0)
         support_set['mask'] = np.concatenate((support_mask, negative_support['mask']), 0)
-        support_set['label'] = np.concatenate((np.ones((support_size), dtype=np.int32), np.zeros((support_size), dtype=np.int32)), 0)
+        support_set['label'] = np.concatenate((np.ones((support_size), dtype=np.int32), np.zeros((negative_rate * support_size), dtype=np.int32)), 0)
 
         query_set['word'].append(query_word)
         query_set['pos1'].append(query_pos1) 
