@@ -86,9 +86,9 @@ class Framework:
               ckpt_dir='./checkpoint',
               test_result_dir='./test_result',
               learning_rate=1.,
-              lr_step_size=200000000,
+              lr_step_size=10000,
               weight_decay=1e-5,
-              train_iter=30000,
+              train_iter=100000,
               val_iter=100,
               val_step=2000,
               test_iter=3000,
@@ -167,8 +167,14 @@ class Framework:
 
             if (model2 is not None):
                 scheduler2.step()
-                batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
-                model2(batch_data, s_num_size, s_num_class)
+                # batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
+                # model2(batch_data, s_num_size, s_num_class)
+                support_size = 10
+                query_size = 5
+                unlabelled_size = 50
+                query_class = 5
+                batch_data = self.train_data_loader.next_new_relation(self.train_data_loader, support_size, query_size, unlabelled_size, query_class)
+                model2.forward_snowball_style(batch_data, support_size, threshold=0.5)
                 loss2 = model2._loss
                 right2 = model2._accuracy
                 opt2.zero_grad()
@@ -192,10 +198,14 @@ class Framework:
                 iter_sample = 0.
 
             if (it + 1) % val_step == 0:
+                print("\n----------------- siamese test -------------------")
                 self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.5)
                 self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.9)
                 self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.95)
-                acc = self.eval(model, eval_iter=val_iter)
+                print("\n----------------- snowball test -------------------")
+                acc = self.eval(model, eval_iter=val_iter, threshold=0.5)
+                acc = self.eval(model, eval_iter=val_iter, threshold=0.95)
+                print("\n----------------- test end -------------------\n")
                 if acc > best_acc:
                     print('Best checkpoint')
                     if not os.path.exists(ckpt_dir):
@@ -211,7 +221,7 @@ class Framework:
 
     def eval(self,
             model,
-            support_size=10, query_size=10, unlabelled_size=50, query_class=2,
+            support_size=10, query_size=10, unlabelled_size=50, query_class=5,
             s_num_size=10, s_num_class=50,
             eval_iter=1000,
             ckpt=None,
@@ -240,22 +250,38 @@ class Framework:
         iter_prec = 0.0
         iter_recall = 0.0
         iter_sample = 0.0
+        iter_bright = 0.0
+        iter_bprec = 0.0
+        iter_brecall = 0.0
+        iter_sbprec = 0.0
         for it in range(eval_iter):
             if is_model2:
                 batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
                 model(batch_data, s_num_size, s_num_class, threshold=threshold)
             else: 
                 batch_data = eval_dataset.next_new_relation(self.train_data_loader, support_size, query_size, unlabelled_size, query_class)
-                model.forward_new(batch_data, threshold=threshold)
+                model.forward_new(batch_data, positive_support_size=support_size, threshold=threshold)
+                model.forward_baseline(batch_data)
+                iter_bright += model._baseline_accuracy
+                iter_bprec += model._baseline_prec
+                iter_brecall += model._baseline_recall
+
             iter_right += model._accuracy
             iter_prec += model._prec
             iter_recall += model._recall
+            
             iter_sample += 1
             if hasattr(model, '_snowball'):
                 snowball_cnt = model._snowball
+                if model._snowball == 0:
+                    snowball_prec = 0
+                else:
+                    snowball_prec = float(model._correct_snowball) / float(model._snowball)
+                iter_sbprec += snowball_prec
             else:
                 snowball_cnt = -1
-            sys.stdout.write('[EVAL t={0}] step: {1:4} | accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5}'.format(threshold, it + 1, 100 * iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, snowball_cnt) +'\r')
+                snowball_prec = -1
+                iter_sbprec = 0
+            sys.stdout.write('[EVAL t={0}] step: {1:4} | accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5} | bacc: {6:3.2f}%, bprec: {7:3.2f}%, brec: {8:3.2f}% | sb prec {9:3.2f}%'.format(threshold, it + 1, 100 * iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, snowball_cnt, 100 * iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample, 100 * iter_sbprec / iter_sample) +'\r')
             sys.stdout.flush()
-        print("")
         return iter_right / iter_sample

@@ -46,6 +46,7 @@ class Finetune(nrekit.framework.Model):
             x = F.sigmoid(x)
             iter_loss_array = self.__loss__(x, support['label'].float())
             iter_loss = iter_loss_array.mean()
+            optimizer.zero_grad()
             iter_loss.backward(retain_graph=True)
             optimizer.step()
         
