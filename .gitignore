@@ -107,5 +107,6 @@ venv.bak/
 
 data
 *swap
+*swp
 _processed_data
 checkpoint
