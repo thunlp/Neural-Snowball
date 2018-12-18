@@ -48,7 +48,7 @@ class Model(nn.Module):
     
 class Framework:
 
-    def __init__(self, train_data_loader, val_data_loader, test_data_loader):
+    def __init__(self, train_data_loader, val_data_loader, test_data_loader, train_distant, val_distant, test_distant):
         '''
         train_data_loader: DataLoader for training.
         val_data_loader: DataLoader for validating.
@@ -57,6 +57,9 @@ class Framework:
         self.train_data_loader = train_data_loader
         self.val_data_loader = val_data_loader
         self.test_data_loader = test_data_loader
+        self.train_distant = train_distant 
+        self.val_distant = val_distant 
+        self.test_distant = test_distant 
     
     def __load_model__(self, ckpt):
         '''

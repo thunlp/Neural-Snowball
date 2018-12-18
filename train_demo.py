@@ -8,8 +8,11 @@ max_length = 40
 train_data_loader = JSONFileDataLoader('./data/train.json', './data/glove.6B.50d.json', max_length=max_length)
 val_data_loader = JSONFileDataLoader('./data/val.json', './data/glove.6B.50d.json', max_length=max_length)
 test_data_loader = JSONFileDataLoader('./data/test.json', './data/glove.6B.50d.json', max_length=max_length)
+train_distant = JSONFileDataLoader('./data/train_distant.json', './data/glove.6B.50d.json', max_length=max_length, distant=True)
+val_distant = JSONFileDataLoader('./data/val_distant.json', './data/glove.6B.50d.json', max_length=max_length, distant=True)
+test_distant = JSONFileDataLoader('./data/test_distant.json', './data/glove.6B.50d.json', max_length=max_length, distant=True)
 
-framework = nrekit.framework.Framework(train_data_loader, val_data_loader, test_data_loader)
+framework = nrekit.framework.Framework(train_data_loader, val_data_loader, test_data_loader, train_distant, val_distant, test_distant)
 sentence_encoder = nrekit.sentence_encoder.CNNSentenceEncoder(train_data_loader.word_vec_mat, max_length)
 sentence_encoder2 = nrekit.sentence_encoder.CNNSentenceEncoder(train_data_loader.word_vec_mat, max_length)
 model2 = models.siamese.Siamese(sentence_encoder2, hidden_size=230)

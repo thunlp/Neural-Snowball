@@ -197,3 +197,104 @@ class Snowball(nrekit.framework.Model):
         self._baseline_prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
         self._baseline_recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
 
+    def forward_new_entpair(self, data, positive_support_size, distant, threshold=0.5):
+        support, query = data
+        new_W = Variable(self.fc.weight.mean(0) / 1e3, requires_grad=True)
+        new_bias = Variable(torch.zeros((1)), requires_grad=True)
+        optimizer = optim.Adam([new_W, new_bias], 1e-1, weight_decay=0)
+        new_W = new_W.cuda()
+        new_bias = new_bias.cuda()
+
+        # Expand
+        # support_x = self.sentence_encoder(support) # (batch_size, hidden_size)
+        entpair_support = {}
+        entpair_distant = {}
+        exist_id = {}
+        for i in range(len(support['id'])): # only positive support
+            etp = support['entpair'][i]
+            exist_id[support['id'][i]] = 1
+            if etp not in entpair_support:
+                entpair_support[etp] = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 
+            entpair_support[etp]['word'].append(support['word'][i])
+            entpair_support[etp]['pos1'].append(support['pos1'][i])
+            entpair_support[etp]['pos2'].append(support['pos2'][i])
+            entpair_support[etp]['mask'].append(support['mask'][i])
+
+        for etp in entpair_support:
+            unlabelled = distant.next_same_entpair(etp)
+            entpair_distant[etp] = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': []}
+            for i in range(unlabelled['word'].size(0)):
+                if unlabelled['id'][i] not in exist_id:
+                    entpair_distant[etp]['word'].append(unlabelled['word'][i])
+                    entpair_distant[etp]['pos1'].append(unlabelled['pos1'][i])
+                    entpair_distant[etp]['pos2'].append(unlabelled['pos2'][i])
+                    entpair_distant[etp]['mask'].append(unlabelled['mask'][i])
+                    entpair_distant[etp]['id'].append(unlabelled['id'][i])
+                    entpair_distant[etp]['entpair'].append(unlabelled['entpair'][i])
+            entpair_support[etp]['word'] = torch.stack(enhtpair_support[etp]['word'], 0).cuda()
+            entpair_support[etp]['pos1'] = torch.stack(enhtpair_support[etp]['pos1'], 0).cuda()
+            entpair_support[etp]['pos2'] = torch.stack(enhtpair_support[etp]['pos2'], 0).cuda()
+            entpair_support[etp]['mask'] = torch.stack(enhtpair_support[etp]['mask'], 0).cuda()
+
+            entpair_distant[etp]['word'] = torch.stack(enhtpair_distant[etp]['word'], 0).cuda()
+            entpair_distant[etp]['pos1'] = torch.stack(enhtpair_distant[etp]['pos1'], 0).cuda()
+            entpair_distant[etp]['pos2'] = torch.stack(enhtpair_distant[etp]['pos2'], 0).cuda()        
+            entpair_distant[etp]['mask'] = torch.stack(enhtpair_distant[etp]['mask'], 0).cuda()
+            
+            similar = self.siamese_model.forward_infer(support, unlabelled, support_size=positive_support_size, threshold=0.95)
+      
+        unlabelled_x = self.sentence_encoder(unlabelled)
+        similar = self.siamese_model.forward_infer(support, unlabelled, support_size=positive_support_size, threshold=0.95)
+        chosen = []
+        correct_snowball = 0
+        assert(similar.size(0) == 50 * 5)
+        for i in range(similar.size(0)):
+            if similar[i] == 1:
+                chosen.append(unlabelled_x[i])
+                if i <= 50:
+                    correct_snowball += 1
+        self._correct_snowball = correct_snowball
+        self._snowball = similar.sum()
+        if similar.sum() > 0:
+            chosen = torch.stack(chosen, 0)
+            chosen = torch.cat([support_x, chosen], 0)
+            label = torch.cat([support['label'], torch.ones((chosen.size(0) - support['label'].size(0))).long().cuda()], 0)
+        else:
+            chosen = support_x
+            label = support['label']
+
+        '''
+        for i in range(10):
+            x = torch.matmul(support_x, new_W) + new_bias # (batch_size, 1)
+            x = F.sigmoid(x)
+            iter_loss_array = self.__loss__(x, support['label'].float())
+            iter_loss = iter_loss_array.mean()
+            iter_loss.backward(retain_graph=True)
+            optimizer.step()
+        '''
+
+        for i in range(10):
+            x = torch.matmul(chosen, new_W) + new_bias # (batch_size, 1)
+            x = F.sigmoid(x)
+            iter_loss_array = self.__loss__(x, label.float())
+            iter_loss = iter_loss_array.mean()
+            optimizer.zero_grad()
+            iter_loss.backward(retain_graph=True)
+            optimizer.step()
+        
+        # Test
+        query_x = self.sentence_encoder(query) # (batch_size, hidden_size)
+        query_x = self.drop(query_x)
+        x = torch.matmul(query_x, new_W) + new_bias # (batch_size, 1)
+        x = F.sigmoid(x)
+        loss_array = self.__loss__(x, query['label'].float())
+        self._loss = loss_array.mean()
+        pred = torch.zeros((x.size(0))).long().cuda()
+        pred[x > threshold] = 1
+        self._accuracy = self.__accuracy__(pred, query['label'])
+        pred = pred.view(-1).data.cpu().numpy()
+        label = query['label'].view(-1).data.cpu().numpy()
+        self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
+        self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
+
+
