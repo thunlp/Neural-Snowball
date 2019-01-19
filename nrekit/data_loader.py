@@ -402,15 +402,22 @@ class JSONFileDataLoader(FileDataLoader):
 
         return support_set, query_set, unlabelled_set
 
-    def next_same_entpair(self, entpair):
+    def get_same_entpair_ins(self, entpair):
+        '''
+        return instances with the same entpair
+        entpair: a string with the format '$head_entity#$tail_entity'
+        '''
+        if not entpair in self.entpair2scope:
+            return None
         scope = self.entpair2scope[entpair]
+        batch = {}
         batch['word'] = Variable(torch.from_numpy(self.data_word[scope]).long()) 
         batch['pos1'] = Variable(torch.from_numpy(self.data_pos1[scope]).long())
         batch['pos2'] = Variable(torch.from_numpy(self.data_pos2[scope]).long())
         batch['mask'] = Variable(torch.from_numpy(self.data_mask[scope]).long())
         batch['label']= Variable(torch.from_numpy(self.data_label[scope]).long())
         batch['id']   = scope
-        batch['entpair'] = entpair * scope.shape[0]
+        batch['entpair'] = entpair * len(scope)
 
         # To cuda
         if self.cuda:
@@ -419,6 +426,47 @@ class JSONFileDataLoader(FileDataLoader):
 
         return batch
 
+    def get_random_candidate(self, pos_class, num_class, num_ins_per_class):
+        '''
+        random pick some instances for snowball phase 2 with total number num_class (1 pos + num_class-1 neg) * num_ins_per_class
+        pos_class: positive relation (name)
+        num_class: total number of classes, including the positive and negative relations
+        num_ins_per_class: the number of instances of each relation
+        return: a dataset
+        '''
+        
+        target_classes = random.sample(self.rel2scope.keys(), num_class) 
+        if not pos_class in target_classes:
+            target_classes = target_classes[:-1] + [pos_class]
+        candidate = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': []}
+
+        for i, class_name in enumerate(target_classes):
+            scope = self.rel2scope[class_name]
+            indices = np.random.choice(list(range(scope[0], scope[1])), num_ins_per_class, False)
+            candidate['word'].append(self.data_word[indices])
+            candidate['pos1'].append(self.data_pos1[indices])
+            candidate['pos2'].append(self.data_pos2[indices])
+            candidate['mask'].append(self.data_mask[indices])
+            candidate['id'].append(indices)
+            candidate['entpair'].append(self.data_entpair)
+
+        candidate['word'] = np.concatenate(candidate['word'], 0)
+        candidate['pos1'] = np.concatenate(candidate['pos1'], 0)
+        candidate['pos2'] = np.concatenate(candidate['pos2'], 0)
+        candidate['mask'] = np.concatenate(candidate['mask'], 0)
+
+        candidate['word'] = Variable(torch.from_numpy(candidate['word']).long()) 
+        candidate['pos1'] = Variable(torch.from_numpy(candidate['pos1']).long())
+        candidate['pos2'] = Variable(torch.from_numpy(candidate['pos2']).long())
+        candidate['mask'] = Variable(torch.from_numpy(candidate['mask']).long())
+
+        # To cuda
+        if self.cuda:
+            for key in ['word', 'pos1', 'pos2', 'mask']:
+                candidate[key] = candidate[key].cuda()
+
+        return candidate
+   
     def next_new_relation_entpair(self, train_data_loader, support_size, query_size, query_class, negative_rate=5):
         '''
         support_size: The num of instances for positive / negative. The total support size is support_size * 2.
@@ -431,11 +479,11 @@ class JSONFileDataLoader(FileDataLoader):
 
         # New relation
         scope = self.rel2scope[target_classes[0]]
-        indices = np.random.choice(list(range(scope[0], scope[1])), support_size + query_size + unlabelled_size, False)
-        support_word, query_word, _ = np.split(self.data_word[indices], [support_size, support_size + query_size, support_size + query_size])
-        support_pos1, query_pos1, _ = np.split(self.data_pos1[indices], [support_size, support_size + query_size, support_size + query_size])
-        support_pos2, query_pos2, _ = np.split(self.data_pos2[indices], [support_size, support_size + query_size, support_size + query_size])
-        support_mask, query_mask, _ = np.split(self.data_mask[indices], [support_size, support_size + query_size, support_size + query_size])
+        indices = np.random.choice(list(range(scope[0], scope[1])), support_size + query_size, False)
+        support_word, query_word, _ = np.split(self.data_word[indices], [support_size, support_size + query_size])
+        support_pos1, query_pos1, _ = np.split(self.data_pos1[indices], [support_size, support_size + query_size])
+        support_pos2, query_pos2, _ = np.split(self.data_pos2[indices], [support_size, support_size + query_size])
+        support_mask, query_mask, _ = np.split(self.data_mask[indices], [support_size, support_size + query_size])
         support_id = indices[:support_size]
         support_entpair = self.data_entpair[indices[:support_size]]
 
@@ -458,10 +506,11 @@ class JSONFileDataLoader(FileDataLoader):
         for i, class_name in enumerate(target_classes[1:]):
             scope = self.rel2scope[class_name]
             indices = np.random.choice(list(range(scope[0], scope[1])), query_size, False)
-            query_word, _ = np.split(self.data_word[indices], [query_size, query_size])  
-            query_pos1, _ = np.split(self.data_pos1[indices], [query_size, query_size])    
-            query_pos2, _ = np.split(self.data_pos2[indices], [query_size, query_size])    
-            query_mask, _ = np.split(self.data_mask[indices], [query_size, query_size])
+            query_set['word'].append(self.data_word[indices])  
+            query_set['pos1'].append(self.data_pos1[indices])    
+            query_set['pos2'].append(self.data_pos2[indices])    
+            query_set['mask'].append(self.data_mask[indices])
+            query_set['label'] += [0] * query_size
 
         query_set['word'] = np.concatenate(query_set['word'], 0)
         query_set['pos1'] = np.concatenate(query_set['pos1'], 0)
@@ -483,9 +532,9 @@ class JSONFileDataLoader(FileDataLoader):
 
         # To cuda
         if self.cuda:
-            for key in ['word', 'pos1', 'pos2', 'mask']:
+            for key in ['word', 'pos1', 'pos2', 'mask', 'label']:
                 support_set[key] = support_set[key].cuda()
-            for key in ['word', 'pos1', 'pos2', 'mask']:
+            for key in ['word', 'pos1', 'pos2', 'mask', 'label']:
                 query_set[key] = query_set[key].cuda()
 
         return support_set, query_set
