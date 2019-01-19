@@ -48,7 +48,7 @@ class Model(nn.Module):
     
 class Framework:
 
-    def __init__(self, train_data_loader, val_data_loader, test_data_loader, train_distant, val_distant, test_distant):
+    def __init__(self, train_data_loader, val_data_loader, test_data_loader, distant):
         '''
         train_data_loader: DataLoader for training.
         val_data_loader: DataLoader for validating.
@@ -57,9 +57,7 @@ class Framework:
         self.train_data_loader = train_data_loader
         self.val_data_loader = val_data_loader
         self.test_data_loader = test_data_loader
-        self.train_distant = train_distant 
-        self.val_distant = val_distant 
-        self.test_distant = test_distant 
+        self.distant = distant 
     
     def __load_model__(self, ckpt):
         '''
@@ -93,7 +91,7 @@ class Framework:
               weight_decay=1e-5,
               train_iter=100000,
               val_iter=100,
-              val_step=2000,
+              val_step=500,
               test_iter=3000,
               cuda=True,
               pretrain_model=None,
@@ -170,14 +168,19 @@ class Framework:
 
             if (model2 is not None):
                 scheduler2.step()
-                # batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
-                # model2(batch_data, s_num_size, s_num_class)
-                support_size = 10
-                query_size = 5
-                unlabelled_size = 50
-                query_class = 5
-                batch_data = self.train_data_loader.next_new_relation(self.train_data_loader, support_size, query_size, unlabelled_size, query_class)
-                model2.forward_snowball_style(batch_data, support_size, threshold=0.5)
+
+                # multiclass style
+                batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
+                model2(batch_data, s_num_size, s_num_class)
+
+                # snowball style
+                # support_size = 10
+                # query_size = 5
+                # unlabelled_size = 50
+                # query_class = 5
+                # batch_data = self.train_data_loader.next_new_relation(self.train_data_loader, support_size, query_size, unlabelled_size, query_class)
+                # model2.forward_snowball_style(batch_data, support_size, threshold=0.5)
+
                 loss2 = model2._loss
                 right2 = model2._accuracy
                 opt2.zero_grad()
@@ -187,9 +190,9 @@ class Framework:
                 iter_loss2 += self.item(loss2.data)
                 iter_right2 += self.item(right2.data)
                 iter_sample2 += 1
-                sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}% | loss2: {3:2.6f}, accuracy2: {4:3.2f}%'.format( \
+                sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}% | loss2: {3:2.6f}, accuracy2: {4:3.2f}%, prec: {5:3.2f}%, recall: {6:3.2f}%'.format( \
                     it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample, \
-                    iter_loss2 / iter_sample2, 100 * iter_right2 / iter_sample2) +'\r')
+                    iter_loss2 / iter_sample2, 100 * iter_right2 / iter_sample2, 100.0 * model2._prec, 100.0 * model2._recall) +'\r')
                 sys.stdout.flush()
             else:
                 sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%'.format(it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample) +'\r')
@@ -206,8 +209,11 @@ class Framework:
                 self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.9)
                 self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.95)
                 print("\n----------------- snowball test -------------------")
-                acc = self.eval(model, eval_iter=val_iter, threshold=0.5)
-                acc = self.eval(model, eval_iter=val_iter, threshold=0.95)
+                acc = self.eval(model, eval_iter=val_iter, threshold_for_snowball=0.)
+                acc = self.eval(model, eval_iter=val_iter, threshold_for_snowball=0.2)
+                acc = self.eval(model, eval_iter=val_iter, threshold_for_snowball=0.5)
+                acc = self.eval(model, eval_iter=val_iter, threshold_for_snowball=0.7)
+
                 print("\n----------------- test end -------------------\n")
                 if acc > best_acc:
                     print('Best checkpoint')
@@ -229,7 +235,8 @@ class Framework:
             eval_iter=1000,
             ckpt=None,
             is_model2=False,
-            threshold=0.5):
+            threshold=0.5,
+            threshold_for_snowball=0.5):
         '''
         model: a FewShotREModel instance
         B: Batch size
@@ -248,6 +255,7 @@ class Framework:
             checkpoint = self.__load_model__(ckpt)
             model.load_state_dict(checkpoint['state_dict'])
             eval_dataset = self.test_data_loader
+        eval_distant_dataset = self.distant
 
         iter_right = 0.0
         iter_prec = 0.0
@@ -257,14 +265,18 @@ class Framework:
         iter_bprec = 0.0
         iter_brecall = 0.0
         iter_sbprec = 0.0
+        iter_snowball = 0
         for it in range(eval_iter):
             if is_model2:
                 batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
                 model(batch_data, s_num_size, s_num_class, threshold=threshold)
             else: 
-                batch_data = eval_dataset.next_new_relation(self.train_data_loader, support_size, query_size, unlabelled_size, query_class)
-                model.forward_new(batch_data, positive_support_size=support_size, threshold=threshold)
-                model.forward_baseline(batch_data)
+                # batch_data = eval_dataset.next_new_relation(self.train_data_loader, support_size, query_size, unlabelled_size, query_class)
+                batch_data = eval_dataset.next_new_relation_entpair(self.train_data_loader, support_size, query_size, query_class)
+
+                #model.forward_new(batch_data, positive_support_size=support_size, threshold=threshold)
+                model.forward_new_entpair(batch_data, positive_support_size=support_size, distant=eval_distant_dataset, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
+                model.forward_baseline(batch_data, threshold=threshold)
                 iter_bright += model._baseline_accuracy
                 iter_bprec += model._baseline_prec
                 iter_brecall += model._baseline_recall
@@ -285,6 +297,7 @@ class Framework:
                 snowball_cnt = -1
                 snowball_prec = -1
                 iter_sbprec = 0
-            sys.stdout.write('[EVAL t={0}] step: {1:4} | accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5} | bacc: {6:3.2f}%, bprec: {7:3.2f}%, brec: {8:3.2f}% | sb prec {9:3.2f}%'.format(threshold, it + 1, 100 * iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, snowball_cnt, 100 * iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample, 100 * iter_sbprec / iter_sample) +'\r')
+            iter_snowball += snowball_cnt
+            sys.stdout.write('[EVAL tforsnow={0}] step: {1:4} | accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5} | bacc: {6:3.2f}%, bprec: {7:3.2f}%, brec: {8:3.2f}% | sb prec {9:3.2f}%'.format(threshold_for_snowball, it + 1, 100 * iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_snowball, 100 * iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample, 100 * iter_sbprec / iter_sample) +'\r')
             sys.stdout.flush()
         return iter_right / iter_sample
