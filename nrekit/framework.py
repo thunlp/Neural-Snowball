@@ -91,7 +91,7 @@ class Framework:
               weight_decay=1e-5,
               train_iter=100000,
               val_iter=100,
-              val_step=500,
+              val_step=1000,
               test_iter=3000,
               cuda=True,
               pretrain_model=None,
@@ -231,7 +231,7 @@ class Framework:
     def eval(self,
             model,
             support_size=10, query_size=10, unlabelled_size=50, query_class=10,
-            s_num_size=10, s_num_class=50,
+            s_num_size=10, s_num_class=10,
             eval_iter=1000,
             ckpt=None,
             is_model2=False,
@@ -278,7 +278,7 @@ class Framework:
                 iter_bprec += model._baseline_prec
                 iter_brecall += model._baseline_recall
 
-            if hasattr(model, _f1):
+            if hasattr(model, '_f1'):
                 iter_right += model._f1
             else:
                 iter_right += model._accuracy
@@ -298,6 +298,7 @@ class Framework:
                 snowball_prec = -1
                 iter_sbprec = 0
             iter_snowball += snowball_cnt
+            print('')
             sys.stdout.write('[EVAL tforsnow={0}] step: {1:4} | acc/f1: {2:1.4f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5} | [baseline] acc/f1: {6:1.4f}%, prec: {7:3.2f}%, rec: {8:3.2f}%'.format(threshold_for_snowball, it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_snowball, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
             sys.stdout.flush()
         return iter_right / iter_sample

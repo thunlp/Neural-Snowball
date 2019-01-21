@@ -264,7 +264,7 @@ class JSONFileDataLoader(FileDataLoader):
         batch['pos1'] = Variable(torch.from_numpy(self.data_pos1[current_index]).long())
         batch['pos2'] = Variable(torch.from_numpy(self.data_pos2[current_index]).long())
         batch['mask'] = Variable(torch.from_numpy(self.data_mask[current_index]).long())
-        batch['label']=Variable(torch.from_numpy(self.data_label[current_index]).long())
+        batch['label']= Variable(torch.from_numpy(self.data_label[current_index]).long())
 
         # To cuda
         if self.cuda:
@@ -442,13 +442,13 @@ class JSONFileDataLoader(FileDataLoader):
 
         for i, class_name in enumerate(target_classes):
             scope = self.rel2scope[class_name]
-            indices = np.random.choice(list(range(scope[0], scope[1])), num_ins_per_class, False)
+            indices = np.random.choice(list(range(scope[0], scope[1])), min(num_ins_per_class, scope[1] - scope[0]), False)
             candidate['word'].append(self.data_word[indices])
             candidate['pos1'].append(self.data_pos1[indices])
             candidate['pos2'].append(self.data_pos2[indices])
             candidate['mask'].append(self.data_mask[indices])
-            candidate['id'].append(indices)
-            candidate['entpair'].append(self.data_entpair)
+            candidate['id'] += list(indices)
+            candidate['entpair'] += list(self.data_entpair[indices])
 
         candidate['word'] = np.concatenate(candidate['word'], 0)
         candidate['pos1'] = np.concatenate(candidate['pos1'], 0)
@@ -489,17 +489,17 @@ class JSONFileDataLoader(FileDataLoader):
         support_pos1, query_pos1, _ = np.split(self.data_pos1[indices], [support_pos_size, support_pos_size + query_size])
         support_pos2, query_pos2, _ = np.split(self.data_pos2[indices], [support_pos_size, support_pos_size + query_size])
         support_mask, query_mask, _ = np.split(self.data_mask[indices], [support_pos_size, support_pos_size + query_size])
-        support_id = indices[:support_pos_size]
-        support_entpair = self.data_entpair[indices[:support_pos_size]]
+        support_id = list(indices[:support_pos_size])
+        support_entpair = list(self.data_entpair[indices[:support_pos_size]])
 
-        support_neg = train_data_loader.next_batch(support_pos_size * negative_rate)
-        support_neg['label'] = np.zeros((negative_rate * support_pos_size), dtype=np.int32)
+        support_neg = train_data_loader.next_batch(support_pos_size * support_neg_rate)
+        support_neg['label'] = np.zeros((support_neg_rate * support_pos_size), dtype=np.int32)
 
         support_pos['word'] = support_word
         support_pos['pos1'] = support_pos1
         support_pos['pos2'] = support_pos2
         support_pos['mask'] = support_mask
-        support_pos['label'] = np.ones((support_size), dtype=np.int32)
+        support_pos['label'] = np.ones((support_pos_size), dtype=np.int32)
         support_pos['id'] = support_id
         support_pos['entpair'] = support_entpair
 
@@ -530,10 +530,6 @@ class JSONFileDataLoader(FileDataLoader):
         support_pos['pos2'] = Variable(torch.from_numpy(support_pos['pos2']).long())
         support_pos['mask'] = Variable(torch.from_numpy(support_pos['mask']).long())
         support_pos['label'] = Variable(torch.from_numpy(support_pos['label']).long())
-        support_neg['word'] = Variable(torch.from_numpy(support_neg['word']).long()) 
-        support_neg['pos1'] = Variable(torch.from_numpy(support_neg['pos1']).long())
-        support_neg['pos2'] = Variable(torch.from_numpy(support_neg['pos2']).long())
-        support_neg['mask'] = Variable(torch.from_numpy(support_neg['mask']).long())
         support_neg['label'] = Variable(torch.from_numpy(support_neg['label']).long())
 
         query['word'] = Variable(torch.from_numpy(query['word']).long()) 
@@ -545,9 +541,10 @@ class JSONFileDataLoader(FileDataLoader):
         # To cuda
         if self.cuda:
             for key in ['word', 'pos1', 'pos2', 'mask', 'label']:
-                support_set[key] = support_set[key].cuda()
+                support_pos[key] = support_pos[key].cuda()
             for key in ['word', 'pos1', 'pos2', 'mask', 'label']:
-                query_set[key] = query_set[key].cuda()
+                query[key] = query[key].cuda()
+            support_neg[key] = support_neg[key].cuda()
 
         return support_pos, support_neg, query, target_classes[0]
 

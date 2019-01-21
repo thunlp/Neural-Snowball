@@ -187,18 +187,24 @@ class Snowball(nrekit.framework.Model):
         # test
         query_prob = self._infer(query)
         self._baseline_accuracy = float((query_prob > threshold).sum()) / float(query_prob.shape[0])
-        self._baseline_prec = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query_prob > threshold).sum())
+        if (query_prob > threshold).sum() == 0:
+            self._baseline_prec = 0
+        else:        
+            self._baseline_prec = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query_prob > threshold).sum())
         self._baseline_recall = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query['label'] == 1).sum())
-        self._baseline_f1 = 2 * precision * recall / (precision + recall)
-        self._baseline_auc = sklearn.metrics.roc_auc_score(query['label'], query_prob)
+        if self._baseline_prec + self._baseline_recall == 0:
+            self._baseline_f1 = 0
+        else:
+            self._baseline_f1 = 2 * self._baseline_prec * self._baseline_recall / (self._baseline_prec + self._baseline_recall)
+        self._baseline_auc = sklearn.metrics.roc_auc_score(query['label'].cpu().detach().numpy(), query_prob.cpu().detach().numpy())
 
     def _train_finetune_init(self):
         # init variables and optimizer
         self.new_W = Variable(self.fc.weight.mean(0) / 1e3, requires_grad=True)
         self.new_bias = Variable(torch.zeros((1)), requires_grad=True)
-        self.optimizer = optim.Adam([new_W, new_bias], 1e-1, weight_decay=1e-5)
-        self.new_W = new_W.cuda()
-        self.new_bias = new_bias.cuda()
+        self.optimizer = optim.Adam([self.new_W, self.new_bias], 1e-1, weight_decay=1e-5)
+        self.new_W = self.new_W.cuda()
+        self.new_bias = self.new_bias.cuda()
 
     def _train_finetune(self, data_repre, label):
         '''
@@ -217,16 +223,17 @@ class Snowball(nrekit.framework.Model):
         # train
         print('')
         for epoch in range(max_epoch):
-            max_iter = data_repre.size(0) # batch_size
+            max_iter = data_repre.size(0) // batch_size
             if data_repre.size(0) % batch_size != 0:
                 max_iter += 1
             order = list(range(data_repre.size(0)))
             random.shuffle(order)
             for i in range(max_iter):            
-                x = data_repre[order[i * batch_size, min((i + 1) * batch_size, data_repre.size(0))]]
+                x = data_repre[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
+                batch_label = label[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
                 x = torch.matmul(x, self.new_W) + self.new_bias # (batch_size, 1)
                 x = F.sigmoid(x)
-                iter_loss = self.__loss__(x, label.float()).mean()
+                iter_loss = self.__loss__(x, batch_label.float()).mean()
                 self.optimizer.zero_grad()
                 iter_loss.backward(retain_graph=True)
                 self.optimizer.step()
@@ -235,7 +242,7 @@ class Snowball(nrekit.framework.Model):
 
     def _add_ins_to_data(self, dataset_dst, dataset_src, ins_id, label=None):
         '''
-        add one instance from dataset_src to dataset_dst
+        add one instance from dataset_src to dataset_dst (list)
         dataset_dst: destination dataset
         dataset_src: source dataset
         ins_id: id of the instance
@@ -250,6 +257,24 @@ class Snowball(nrekit.framework.Model):
             dataset_dst['entpair'].append(dataset_src['entpair'][ins_id])
         if 'label' in dataset_dst and label is not None:
             dataset_dst['label'].append(label)
+
+    def _add_ins_to_vdata(self, dataset_dst, dataset_src, ins_id, label=None):
+        '''
+        add one instance from dataset_src to dataset_dst (variable)
+        dataset_dst: destination dataset
+        dataset_src: source dataset
+        ins_id: id of the instance
+        '''
+        dataset_dst['word'] = torch.cat([dataset_dst['word'], dataset_src['word'][ins_id].unsqueeze(0)], 0)
+        dataset_dst['pos1'] = torch.cat([dataset_dst['pos1'], dataset_src['pos1'][ins_id].unsqueeze(0)], 0)
+        dataset_dst['pos2'] = torch.cat([dataset_dst['pos2'], dataset_src['pos2'][ins_id].unsqueeze(0)], 0)
+        dataset_dst['mask'] = torch.cat([dataset_dst['mask'], dataset_src['mask'][ins_id].unsqueeze(0)], 0)
+        if 'id' in dataset_dst and 'id' in dataset_src:
+            dataset_dst['id'].append(dataset_src['id'][ins_id])
+        if 'entpair' in dataset_dst and 'entpair' in dataset_src:
+            dataset_dst['entpair'].append(dataset_src['entpair'][ins_id])
+        if 'label' in dataset_dst and label is not None:
+            dataset_dst['label'] = torch.cat([dataset_dst['label'], torch.ones((1)).long().cuda()], 0)
 
     def _dataset_stack_and_cuda(self, dataset):
         '''
@@ -299,6 +324,7 @@ class Snowball(nrekit.framework.Model):
         # snowball
         exist_id = {}
         for snowball_iter in range(snowball_max_iter):
+            print('###### snowball iter ' + snowball_iter)
             # phase 1: expand positive support set from distant dataset (with same entity pairs)
 
             ## get all entpairs and their ins in positive support set
@@ -328,7 +354,7 @@ class Snowball(nrekit.framework.Model):
       
                 for i in range(pick_or_not.size(0)):
                     if pick_or_not[i] == 1:
-                        self._add_ins_to_data(support_pos, entpair_distant[entpair], i, label=1)
+                        self._add_ins_to_vdata(support_pos, entpair_distant[entpair], i, label=1)
                         exist_id[entpair_distant[entpair]['id'][i]] = 1
                 self._phase1_add_num += pick_or_not.sum()
             
@@ -340,16 +366,17 @@ class Snowball(nrekit.framework.Model):
             ## finetune
             self._train_finetune(support_rep, support_label)
             self._forward_eval_binary(query, threshold)
+            print('\nphase1 add {} ins'.format(self._phase1_add_num))
 
             # phase 2: use the new classifier to pick more extended support ins
             self._phase2_add_num = 0
             candidate = distant.get_random_candidate(self.pos_class, candidate_num_class, candidate_num_ins_per_class)
             candidate_prob = self._infer(candidate)
             for i in range(candidate_prob.size(0)):
-                if (candidate_prob[i] > threshold_for_phase2) and (not candidate['id'][i] in exist_id):
+                if (candidate_prob[i] > threshold_for_phase2) and not (candidate['id'][i] in exist_id):
                     exist_id[candidate['id'][i]] = 1 
                     self._phase2_add_num += 1
-                    self._add_ins_to_data(support_pos, candidate, i, label=1)
+                    self._add_ins_to_vdata(support_pos, candidate, i, label=1)
 
             ## build new support set
             support_pos_rep = self.sentence_encoder(support_pos)
@@ -359,8 +386,9 @@ class Snowball(nrekit.framework.Model):
             ## finetune
             self._train_finetune(support_rep, support_label)
             self._forward_eval_binary(query, threshold)
+            print('\nphase2 add {} ins'.format(self._phase2_add_num))
 
-    def _forward_eval_binary(self, query, threshold=0.5)
+    def _forward_eval_binary(self, query, threshold=0.5):
         '''
         snowball process (eval)
         query: query set (raw data)
@@ -369,10 +397,16 @@ class Snowball(nrekit.framework.Model):
         '''
         query_prob = self._infer(query)
         accuracy = float((query_prob > threshold).sum()) / float(query_prob.shape[0])
-        precision = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query_prob > threshold).sum())
+        if (query_prob > threshold).sum() == 0:
+            precision = 0
+        else:
+            precision = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query_prob > threshold).sum())
         recall = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query['label'] == 1).sum())
-        f1 = 2 * precision * recall / (precision + recall)
-        auc = sklearn.metrics.roc_auc_score(query['label'], query_prob)
+        if precision + recall == 0:
+            f1 = 0
+        else:
+            f1 = 2 * precision * recall / (precision + recall)
+        auc = sklearn.metrics.roc_auc_score(query['label'].cpu().detach().numpy(), query_prob.cpu().detach().numpy())
         print('')
         sys.stdout.write('[EVAL] acc: {0:2.1f}%, prec: {1:2.1f}%, rec: {2:2.1f}%, f1: {3:2.1f}, auc: {4:2.1f}'.format(\
                 accuracy * 100, precision * 100, recall * 100, f1, auc) + '\r')
@@ -395,5 +429,4 @@ class Snowball(nrekit.framework.Model):
         threshold_for_snowball: distant ins with prob > th_for_snowball will be added to extended support set
         '''
         self.pos_class = pos_class 
-        self._forward_train(support_pos, support_neg, distant, threshold=threshold, threshold_for_phase1=threshold_for_snowball, threshold_for_phase2=threshold_for_snowball)
-        self._forward_eval(query, threshold=threshold)
+        self._forward_train(support_pos, support_neg, query, distant, threshold=threshold, threshold_for_phase1=threshold_for_snowball, threshold_for_phase2=threshold_for_snowball)
