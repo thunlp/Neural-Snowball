@@ -230,7 +230,7 @@ class Framework:
 
     def eval(self,
             model,
-            support_size=10, query_size=10, unlabelled_size=50, query_class=5,
+            support_size=10, query_size=10, unlabelled_size=50, query_class=10,
             s_num_size=10, s_num_class=50,
             eval_iter=1000,
             ckpt=None,
@@ -268,20 +268,20 @@ class Framework:
         iter_snowball = 0
         for it in range(eval_iter):
             if is_model2:
-                batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
+                batch_data = eval_dataset.next_multi_class(num_size=s_num_size, num_class=s_num_class)
                 model(batch_data, s_num_size, s_num_class, threshold=threshold)
             else: 
-                # batch_data = eval_dataset.next_new_relation(self.train_data_loader, support_size, query_size, unlabelled_size, query_class)
-                batch_data = eval_dataset.next_new_relation_entpair(self.train_data_loader, support_size, query_size, query_class)
-
-                #model.forward_new(batch_data, positive_support_size=support_size, threshold=threshold)
-                model.forward_new_entpair(batch_data, positive_support_size=support_size, distant=eval_distant_dataset, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
-                model.forward_baseline(batch_data, threshold=threshold)
-                iter_bright += model._baseline_accuracy
+                support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class)
+                model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
+                model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
+                iter_bright += model._baseline_f1
                 iter_bprec += model._baseline_prec
                 iter_brecall += model._baseline_recall
 
-            iter_right += model._accuracy
+            if hasattr(model, _f1):
+                iter_right += model._f1
+            else:
+                iter_right += model._accuracy
             iter_prec += model._prec
             iter_recall += model._recall
             
@@ -298,6 +298,6 @@ class Framework:
                 snowball_prec = -1
                 iter_sbprec = 0
             iter_snowball += snowball_cnt
-            sys.stdout.write('[EVAL tforsnow={0}] step: {1:4} | accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5} | bacc: {6:3.2f}%, bprec: {7:3.2f}%, brec: {8:3.2f}% | sb prec {9:3.2f}%'.format(threshold_for_snowball, it + 1, 100 * iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_snowball, 100 * iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample, 100 * iter_sbprec / iter_sample) +'\r')
+            sys.stdout.write('[EVAL tforsnow={0}] step: {1:4} | acc/f1: {2:1.4f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5} | [baseline] acc/f1: {6:1.4f}%, prec: {7:3.2f}%, rec: {8:3.2f}%'.format(threshold_for_snowball, it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_snowball, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
             sys.stdout.flush()
         return iter_right / iter_sample
