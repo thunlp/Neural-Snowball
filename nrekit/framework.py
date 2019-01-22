@@ -209,10 +209,9 @@ class Framework:
                 self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.9)
                 self.eval(model2, eval_iter=val_iter, is_model2=True, threshold=0.95)
                 print("\n----------------- snowball test -------------------")
-                acc = self.eval(model, eval_iter=val_iter, threshold_for_snowball=0.)
-                acc = self.eval(model, eval_iter=val_iter, threshold_for_snowball=0.2)
-                acc = self.eval(model, eval_iter=val_iter, threshold_for_snowball=0.5)
-                acc = self.eval(model, eval_iter=val_iter, threshold_for_snowball=0.7)
+                acc = self.eval(model, eval_iter=10, threshold_for_snowball=0.7)
+                acc = self.eval(model, eval_iter=10, threshold_for_snowball=0.9)
+                acc = self.eval(model, eval_iter=10, threshold_for_snowball=0.95)
 
                 print("\n----------------- test end -------------------\n")
                 if acc > best_acc:
@@ -232,7 +231,7 @@ class Framework:
             model,
             support_size=10, query_size=10, unlabelled_size=50, query_class=10,
             s_num_size=10, s_num_class=10,
-            eval_iter=1000,
+            eval_iter=10,
             ckpt=None,
             is_model2=False,
             threshold=0.5,
@@ -298,7 +297,6 @@ class Framework:
                 snowball_prec = -1
                 iter_sbprec = 0
             iter_snowball += snowball_cnt
-            print('')
             sys.stdout.write('[EVAL tforsnow={0}] step: {1:4} | acc/f1: {2:1.4f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5} | [baseline] acc/f1: {6:1.4f}%, prec: {7:3.2f}%, rec: {8:3.2f}%'.format(threshold_for_snowball, it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_snowball, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
             sys.stdout.flush()
         return iter_right / iter_sample
