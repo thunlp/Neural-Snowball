@@ -17,6 +17,7 @@ class Siamese(nn.Module):
         self.hidden_size = hidden_size
         self.fc = nn.Linear(hidden_size, 1)
         self.cost = nn.BCELoss(reduction="none")
+        self.drop = nn.Dropout()
         self._accuracy = 0.0
 
     def forward_snowball_style(self, data, positive_support_size, threshold=0.5):
@@ -42,6 +43,7 @@ class Siamese(nn.Module):
 
     def forward(self, data, num_size, num_class, threshold=0.5):
         x = self.sentence_encoder(data).contiguous().view(num_class, num_size, -1)
+        x = self.drop(x)
         x1 = x[:, :num_size/2].contiguous().view(-1, self.hidden_size)
         x2 = x[:, num_size/2:].contiguous().view(-1, self.hidden_size)
         y1 = x[:num_class/2,:].contiguous().view(-1, self.hidden_size)
