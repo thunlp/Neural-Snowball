@@ -323,8 +323,9 @@ class Snowball(nrekit.framework.Model):
 
         # snowball
         exist_id = {}
+        print('\n-------------------------------------------------------')
         for snowball_iter in range(snowball_max_iter):
-            print('###### snowball iter ' + snowball_iter)
+            print('###### snowball iter ' + str(snowball_iter))
             # phase 1: expand positive support set from distant dataset (with same entity pairs)
 
             ## get all entpairs and their ins in positive support set
