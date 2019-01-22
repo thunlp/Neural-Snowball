@@ -26,7 +26,7 @@ class Model(nn.Module):
     def forward_base(self, data):
         raise NotImplementedError
 
-    def forward_new(self, data):
+    def forward(self, data):
         raise NotImplementedError
 
     def __loss__(self, logits, label):
@@ -169,17 +169,8 @@ class Framework:
             if (model2 is not None):
                 scheduler2.step()
 
-                # multiclass style
                 batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
                 model2(batch_data, s_num_size, s_num_class)
-
-                # snowball style
-                # support_size = 10
-                # query_size = 5
-                # unlabelled_size = 50
-                # query_class = 5
-                # batch_data = self.train_data_loader.next_new_relation(self.train_data_loader, support_size, query_size, unlabelled_size, query_class)
-                # model2.forward_snowball_style(batch_data, support_size, threshold=0.5)
 
                 loss2 = model2._loss
                 right2 = model2._accuracy
@@ -298,5 +289,266 @@ class Framework:
                 iter_sbprec = 0
             iter_snowball += snowball_cnt
             sys.stdout.write('[EVAL tforsnow={0}] step: {1:4} | acc/f1: {2:1.4f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5} | [baseline] acc/f1: {6:1.4f}%, prec: {7:3.2f}%, rec: {8:3.2f}%'.format(threshold_for_snowball, it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_snowball, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
+            sys.stdout.flush()
+        return iter_right / iter_sample
+
+class PretrainFramework:
+
+    def __init__(self, train_data_loader, val_data_loader):
+        '''
+        train_data_loader: DataLoader for training.
+        val_data_loader: DataLoader for validating.
+        '''
+        self.train_data_loader = train_data_loader
+        self.val_data_loader = val_data_loader
+    
+    def __load_model__(self, ckpt):
+        '''
+        ckpt: Path of the checkpoint
+        return: Checkpoint dict
+        '''
+        if os.path.isfile(ckpt):
+            checkpoint = torch.load(ckpt)
+            print("Successfully loaded checkpoint '%s'" % ckpt)
+            return checkpoint
+        else:
+            raise Exception("No checkpoint found at '%s'" % ckpt)
+    
+    def item(self, x):
+        '''
+        PyTorch before and after 0.4
+        '''
+        if int(torch.__version__.split('.')[1]) < 4:
+            return x[0]
+        else:
+            return x.item()
+
+    def train_encoder(self,
+              model,
+              model_name,
+              batch_size=200,
+              ckpt_dir='./checkpoint',
+              learning_rate=1.,
+              lr_step_size=10000,
+              weight_decay=1e-5,
+              train_iter=40000,
+              val_iter=2000,
+              val_step=1000,
+              cuda=True,
+              pretrain_model=None,
+              optimizer=optim.SGD):
+        '''
+        model: a FewShotREModel instance
+        model_name: Name of the model
+        B: Batch size
+        N: Num of classes for each batch
+        K: Num of instances for each class in the support set
+        Q: Num of instances for each class in the query set
+        ckpt_dir: Directory of checkpoints
+        learning_rate: Initial learning rate
+        lr_step_size: Decay learning rate every lr_step_size steps
+        weight_decay: Rate of decaying weight
+        train_iter: Num of iterations of training
+        val_iter: Num of iterations of validating
+        val_step: Validate every val_step steps
+        cuda: Use CUDA or not
+        pretrain_model: Pre-trained checkpoint path
+        '''
+        print("Start training...")
+        
+        # Init
+        parameters_to_optimize = filter(lambda x:x.requires_grad, model.parameters())
+        opt = optimizer(parameters_to_optimize, learning_rate, weight_decay=weight_decay)
+        scheduler = optim.lr_scheduler.StepLR(opt, step_size=lr_step_size)
+
+        if pretrain_model:
+            checkpoint = self.__load_model__(pretrain_model)
+            model.load_state_dict(checkpoint['state_dict'])
+            start_iter = checkpoint['iter'] + 1
+        else:
+            start_iter = 0
+
+        if cuda:
+            model = model.cuda()
+
+        # Training
+        best_acc = 0
+        not_best_count = 0 # Stop training after several epochs without improvement.
+        iter_loss = 0.0
+        iter_right = 0.0
+        iter_sample = 0.0
+
+        for it in range(start_iter, start_iter + train_iter):
+            scheduler.step()
+            batch_data = self.train_data_loader.next_batch(batch_size)
+            model.forward_base(batch_data)
+            loss = model.loss()
+            right = model.accuracy()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            
+            iter_loss += self.item(loss.data)
+            iter_right += self.item(right.data)
+            iter_sample += 1
+
+            sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%'.format(it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample) +'\r')
+            sys.stdout.flush()
+
+            if it % val_step == 0:
+                iter_loss = 0.
+                iter_right = 0.
+                iter_sample = 0.
+
+            if (it + 1) % val_step == 0:
+                acc = self.eval_encoder(model, eval_iter=val_iter)
+                if acc > best_acc:
+                    print('Best checkpoint')
+                    if not os.path.exists(ckpt_dir):
+                        os.makedirs(ckpt_dir)
+                    save_path = os.path.join(ckpt_dir, model_name + ".pth.tar")
+                    torch.save({'state_dict': model.state_dict()}, save_path)
+                    best_acc = acc
+                
+        print("\n####################\n")
+        print("Finish training " + model_name)
+
+    def eval_encoder(self,
+            model,
+            eval_iter=2000,
+            batch_size=500):
+        '''
+        model: a FewShotREModel instance
+        eval_iter: num of iterations of evaluation
+        return: Accuracy
+        '''
+        iter_right = 0.0
+        iter_sample = 0.0
+        for it in range(eval_iter):
+            batch_data = self.val_data_loader.next_batch(batch_size)
+            model.forward_base(batch_data)
+            right = model.accuracy()
+
+            iter_right += self.item(right.data)
+            iter_sample += 1
+
+            sys.stdout.write('[EVAL] step: {0:4} | acc: {1:3.2f}%'.format(it + 1, 100 * iter_right / iter_sample) + '\r')
+            sys.stdout.flush()
+        return iter_right / iter_sample
+
+    def train_siamese(self,
+              model,
+              model_name,
+              batch_size=200,
+              ckpt_dir='./checkpoint',
+              learning_rate=1.,
+              lr_step_size=10000,
+              weight_decay=1e-5,
+              train_iter=40000,
+              val_iter=2000,
+              val_step=1000,
+              cuda=True,
+              pretrain_model=None,
+              optimizer=optim.SGD):
+        '''
+        model: a FewShotREModel instance
+        model_name: Name of the model
+        B: Batch size
+        N: Num of classes for each batch
+        K: Num of instances for each class in the support set
+        Q: Num of instances for each class in the query set
+        ckpt_dir: Directory of checkpoints
+        learning_rate: Initial learning rate
+        lr_step_size: Decay learning rate every lr_step_size steps
+        weight_decay: Rate of decaying weight
+        train_iter: Num of iterations of training
+        val_iter: Num of iterations of validating
+        val_step: Validate every val_step steps
+        cuda: Use CUDA or not
+        pretrain_model: Pre-trained checkpoint path
+        '''
+        print("Start training...")
+        
+        # Init
+        parameters_to_optimize = filter(lambda x:x.requires_grad, model.parameters())
+        opt = optimizer(parameters_to_optimize, learning_rate, weight_decay=weight_decay)
+        scheduler = optim.lr_scheduler.StepLR(opt, step_size=lr_step_size)
+
+        if pretrain_model:
+            checkpoint = self.__load_model__(pretrain_model)
+            model.load_state_dict(checkpoint['state_dict'])
+            start_iter = checkpoint['iter'] + 1
+        else:
+            start_iter = 0
+
+        if cuda:
+            model = model.cuda()
+
+        # Training
+        best_acc = 0
+        not_best_count = 0 # Stop training after several epochs without improvement.
+        iter_loss = 0.0
+        iter_right = 0.0
+        iter_sample = 0.0
+
+        s_num_size = 10
+        s_num_class = 50
+
+        for it in range(start_iter, start_iter + train_iter):
+            scheduler2.step()
+
+            batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
+            model(batch_data, s_num_size, s_num_class)
+
+            loss = model._loss
+            right = model._accuracy
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
+            iter_loss += self.item(loss.data)
+            iter_right += self.item(right.data)
+            iter_sample += 1
+            sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%'.format( \
+                iter_loss / iter_sample, 100 * iter_right / iter_sample, 100.0 * model._prec, 100.0 * model._recall) +'\r')
+            sys.stdout.flush()
+
+            if it % val_step == 0:
+                iter_loss = 0.
+                iter_right = 0.
+                iter_sample = 0.
+
+            if (it + 1) % val_step == 0:
+                acc = self.eval(model, eval_iter=val_iter, threshold=0.5)
+                if acc > best_acc:
+                    print('Best checkpoint')
+                    if not os.path.exists(ckpt_dir):
+                        os.makedirs(ckpt_dir)
+                    save_path = os.path.join(ckpt_dir, model_name + ".pth.tar")
+                    torch.save({'state_dict': model.state_dict()}, save_path)
+                    best_acc = acc
+                
+        print("\n####################\n")
+        print("Finish training " + model_name)
+
+    def eval_siamese(self,
+            model,
+            s_num_size=10, s_num_class=10,
+            eval_iter=2000,
+            threshold=0.5):
+
+        iter_right = 0.0
+        iter_prec = 0.0
+        iter_recall = 0.0
+        iter_sample = 0.0
+        for it in range(eval_iter):
+            batch_data = self.val_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
+            model(batch_data, s_num_size, s_num_class, threshold=threshold)
+            iter_right += model._accuracy
+            iter_prec += model._prec
+            iter_recall += model._recall
+            iter_sample += 1
+
+            sys.stdout.write('[EVAL] step: {0:4} | acc: {1:3.2f}%, prec: {2:3.2f}%, recall: {3:3.2f}%'.format(it + 1, 100 * iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample) + '\r')
             sys.stdout.flush()
         return iter_right / iter_sample
