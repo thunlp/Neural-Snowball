@@ -14,8 +14,13 @@ framework = nrekit.framework.Framework(train_data_loader, val_data_loader, test_
 sentence_encoder = nrekit.sentence_encoder.CNNSentenceEncoder(train_data_loader.word_vec_mat, max_length)
 sentence_encoder2 = nrekit.sentence_encoder.CNNSentenceEncoder(train_data_loader.word_vec_mat, max_length)
 model2 = models.siamese.Siamese(sentence_encoder2, hidden_size=230)
+model2.load_state_dict(torch.load('./checkpoint/cnn_siamese.pth.tar')['state_dict'])
 model = models.siamese.Snowball(sentence_encoder, base_class=train_data_loader.rel_tot, siamese_model=model2, hidden_size=230)
+model.load_state_dict(torch.load('./checkpoint/cnn_encoder.pth.tar')['state_dict'])
 model_name = 'siamese'
-# framework.train(model, model_name)
-framework.train(model, model_name, model2=model2)
-
+# framework.train(model, model_name, model2=model2)
+framework.eval(model2, is_model2=True, threshold=0.5)
+framework.eval(model2, is_model2=True, threshold=0.7)
+framework.eval(model2, is_model2=True, threshold=0.9)
+framework.eval(model2, is_model2=True, threshold=0.95)
+framework.eval(model, threshold=0.5, threshold_for_snowball=0.7)

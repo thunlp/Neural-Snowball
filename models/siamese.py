@@ -43,11 +43,10 @@ class Siamese(nn.Module):
 
     def forward(self, data, num_size, num_class, threshold=0.5):
         x = self.sentence_encoder(data).contiguous().view(num_class, num_size, -1)
-        x = self.drop(x)
-        x1 = x[:, :num_size/2].contiguous().view(-1, self.hidden_size)
-        x2 = x[:, num_size/2:].contiguous().view(-1, self.hidden_size)
-        y1 = x[:num_class/2,:].contiguous().view(-1, self.hidden_size)
-        y2 = x[num_class/2:,:].contiguous().view(-1, self.hidden_size)
+        x1 = x[:, :num_size//2].contiguous().view(-1, self.hidden_size)
+        x2 = x[:, num_size//2:].contiguous().view(-1, self.hidden_size)
+        y1 = x[:num_class//2,:].contiguous().view(-1, self.hidden_size)
+        y2 = x[num_class//2:,:].contiguous().view(-1, self.hidden_size)
         # y1 = x[0].contiguous().unsqueeze(0).expand(x.size(0) - 1, -1, -1).contiguous().view(-1, self.hidden_size)
         # y2 = x[1:].contiguous().view(-1, self.hidden_size)
         label = torch.zeros((x1.size(0) + y1.size(0))).long().cuda()
