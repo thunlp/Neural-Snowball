@@ -355,6 +355,7 @@ class PretrainFramework:
         pretrain_model: Pre-trained checkpoint path
         '''
         print("Start training...")
+        model.train()
         
         # Init
         parameters_to_optimize = filter(lambda x:x.requires_grad, model.parameters())
@@ -401,7 +402,9 @@ class PretrainFramework:
                 iter_sample = 0.
 
             if (it + 1) % val_step == 0:
+                print('')
                 acc = self.eval_encoder(model, eval_iter=val_iter)
+                print('')
                 if acc > best_acc:
                     print('Best checkpoint')
                     if not os.path.exists(ckpt_dir):
@@ -422,6 +425,8 @@ class PretrainFramework:
         eval_iter: num of iterations of evaluation
         return: Accuracy
         '''
+
+        model.eval()
         iter_right = 0.0
         iter_sample = 0.0
         for it in range(eval_iter):
@@ -434,6 +439,7 @@ class PretrainFramework:
 
             sys.stdout.write('[EVAL] step: {0:4} | acc: {1:3.2f}%'.format(it + 1, 100 * iter_right / iter_sample) + '\r')
             sys.stdout.flush()
+        model.train()
         return iter_right / iter_sample
 
     def train_siamese(self,
@@ -468,6 +474,7 @@ class PretrainFramework:
         pretrain_model: Pre-trained checkpoint path
         '''
         print("Start training...")
+        model.train()
         
         # Init
         parameters_to_optimize = filter(lambda x:x.requires_grad, model.parameters())
@@ -485,7 +492,7 @@ class PretrainFramework:
             model = model.cuda()
 
         # Training
-        best_acc = 0
+        best_prec = 0
         not_best_count = 0 # Stop training after several epochs without improvement.
         iter_loss = 0.0
         iter_right = 0.0
@@ -495,7 +502,7 @@ class PretrainFramework:
         s_num_class = 50
 
         for it in range(start_iter, start_iter + train_iter):
-            scheduler2.step()
+            scheduler.step()
 
             batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
             model(batch_data, s_num_size, s_num_class)
@@ -510,7 +517,7 @@ class PretrainFramework:
             iter_right += self.item(right.data)
             iter_sample += 1
             sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%'.format( \
-                iter_loss / iter_sample, 100 * iter_right / iter_sample, 100.0 * model._prec, 100.0 * model._recall) +'\r')
+                it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample, 100.0 * model._prec, 100.0 * model._recall) +'\r')
             sys.stdout.flush()
 
             if it % val_step == 0:
@@ -519,14 +526,16 @@ class PretrainFramework:
                 iter_sample = 0.
 
             if (it + 1) % val_step == 0:
-                acc = self.eval(model, eval_iter=val_iter, threshold=0.5)
-                if acc > best_acc:
+                print('')
+                prec = self.eval_siamese(model, eval_iter=val_iter, threshold=0.5)
+                print('')
+                if prec > best_prec:
                     print('Best checkpoint')
                     if not os.path.exists(ckpt_dir):
                         os.makedirs(ckpt_dir)
                     save_path = os.path.join(ckpt_dir, model_name + ".pth.tar")
                     torch.save({'state_dict': model.state_dict()}, save_path)
-                    best_acc = acc
+                    best_prec = prec
                 
         print("\n####################\n")
         print("Finish training " + model_name)
@@ -536,7 +545,8 @@ class PretrainFramework:
             s_num_size=10, s_num_class=10,
             eval_iter=2000,
             threshold=0.5):
-
+        
+        model.eval()
         iter_right = 0.0
         iter_prec = 0.0
         iter_recall = 0.0
@@ -551,4 +561,5 @@ class PretrainFramework:
 
             sys.stdout.write('[EVAL] step: {0:4} | acc: {1:3.2f}%, prec: {2:3.2f}%, recall: {3:3.2f}%'.format(it + 1, 100 * iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample) + '\r')
             sys.stdout.flush()
-        return iter_right / iter_sample
+        model.train()
+        return iter_prec / iter_sample
