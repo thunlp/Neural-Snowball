@@ -80,6 +80,30 @@ class Framework:
         else:
             return x.item()
 
+    def eval_siamese(self,
+            model,
+            s_num_size=10, s_num_class=10,
+            eval_iter=2000,
+            threshold=0.5):
+        
+        model.eval()
+        iter_right = 0.0
+        iter_prec = 0.0
+        iter_recall = 0.0
+        iter_sample = 0.0
+        for it in range(eval_iter):
+            batch_data = self.val_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
+            model(batch_data, s_num_size, s_num_class, threshold=threshold)
+            iter_right += model._accuracy
+            iter_prec += model._prec
+            iter_recall += model._recall
+            iter_sample += 1
+
+            sys.stdout.write('[EVAL] step: {0:4} | acc: {1:3.2f}%, prec: {2:3.2f}%, recall: {3:3.2f}%'.format(it + 1, 100 * iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample) + '\r')
+            sys.stdout.flush()
+        model.train()
+        return iter_prec / iter_sample
+
     def train(self,
               model,
               model_name,
@@ -222,7 +246,7 @@ class Framework:
             model,
             support_size=10, query_size=10, unlabelled_size=50, query_class=10,
             s_num_size=10, s_num_class=10,
-            eval_iter=10,
+            eval_iter=2000,
             ckpt=None,
             is_model2=False,
             threshold=0.5,
@@ -254,41 +278,21 @@ class Framework:
         iter_bright = 0.0
         iter_bprec = 0.0
         iter_brecall = 0.0
-        iter_sbprec = 0.0
-        iter_snowball = 0
         for it in range(eval_iter):
-            if is_model2:
-                batch_data = eval_dataset.next_multi_class(num_size=s_num_size, num_class=s_num_class)
-                model(batch_data, s_num_size, s_num_class, threshold=threshold)
-            else: 
-                support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class)
-                model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
-                model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
-                iter_bright += model._baseline_f1
-                iter_bprec += model._baseline_prec
-                iter_brecall += model._baseline_recall
+            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class)
+            model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
+            model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
 
-            if hasattr(model, '_f1'):
-                iter_right += model._f1
-            else:
-                iter_right += model._accuracy
+            iter_bright += model._baseline_f1
+            iter_bprec += model._baseline_prec
+            iter_brecall += model._baseline_recall
+
+            iter_right += model._f1
             iter_prec += model._prec
             iter_recall += model._recall
             
             iter_sample += 1
-            if hasattr(model, '_snowball'):
-                snowball_cnt = model._snowball
-                if model._snowball == 0:
-                    snowball_prec = 0
-                else:
-                    snowball_prec = float(model._correct_snowball) / float(model._snowball)
-                iter_sbprec += snowball_prec
-            else:
-                snowball_cnt = -1
-                snowball_prec = -1
-                iter_sbprec = 0
-            iter_snowball += snowball_cnt
-            sys.stdout.write('[EVAL tforsnow={0}] step: {1:4} | acc/f1: {2:1.4f}%, prec: {3:3.2f}%, recall: {4:3.2f}%, snowball: {5} | [baseline] acc/f1: {6:1.4f}%, prec: {7:3.2f}%, rec: {8:3.2f}%'.format(threshold_for_snowball, it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_snowball, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
+            sys.stdout.write('[EVAL] step: {0:4} | f1: {1:1.4f}, prec: {2:3.2f}%, recall: {3:3.2f}% | [baseline] f1: {4:1.4f}, prec: {5:3.2f}%, rec: {6:3.2f}%'.format(it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
             sys.stdout.flush()
         return iter_right / iter_sample
 

@@ -196,8 +196,12 @@ class Snowball(nrekit.framework.Model):
         if self._baseline_prec + self._baseline_recall == 0:
             self._baseline_f1 = 0
         else:
-            self._baseline_f1 = 2 * self._baseline_prec * self._baseline_recall / (self._baseline_prec + self._baseline_recall)
+            self._baseline_f1 = float(2.0 * self._baseline_prec * self._baseline_recall) / float(self._baseline_prec + self._baseline_recall)
         self._baseline_auc = sklearn.metrics.roc_auc_score(query['label'].cpu().detach().numpy(), query_prob.cpu().detach().numpy())
+        print('')
+        sys.stdout.write('[BASELINE EVAL] acc: {0:2.2f}%, prec: {1:2.2f}%, rec: {2:2.2f}%, f1: {3:1.3f}, auc: {4:1.3f}'.format( \
+            self._baseline_accuracy * 100, self._baseline_prec * 100, self._baseline_recall * 100, self._baseline_f1, self._baseline_auc))
+        print('')
 
     def _train_finetune_init(self):
         # init variables and optimizer
@@ -282,6 +286,8 @@ class Snowball(nrekit.framework.Model):
         stack the dataset to torch.Tensor and use cuda mode
         dataset: target dataset
         '''
+        if (len(dataset['word']) == 0):
+            return
         dataset['word'] = torch.stack(dataset['word'], 0).cuda()
         dataset['pos1'] = torch.stack(dataset['pos1'], 0).cuda()
         dataset['pos2'] = torch.stack(dataset['pos2'], 0).cuda()
@@ -352,6 +358,8 @@ class Snowball(nrekit.framework.Model):
                         self._add_ins_to_data(entpair_distant[entpair], raw, i)
                 self._dataset_stack_and_cuda(entpair_support[entpair])
                 self._dataset_stack_and_cuda(entpair_distant[entpair])
+                if len(entpair_support[entpair]['word']) == 0 or len(entpair_distant[entpair]['word']) == 0:
+                    continue
                 pick_or_not = self.siamese_model.forward_infer(entpair_support[entpair], entpair_distant[entpair], threshold=threshold_for_phase1)
       
                 for i in range(pick_or_not.size(0)):
@@ -407,10 +415,10 @@ class Snowball(nrekit.framework.Model):
         if precision + recall == 0:
             f1 = 0
         else:
-            f1 = 2 * precision * recall / (precision + recall)
+            f1 = float(2.0 * precision * recall) / float(precision + recall)
         auc = sklearn.metrics.roc_auc_score(query['label'].cpu().detach().numpy(), query_prob.cpu().detach().numpy())
         print('')
-        sys.stdout.write('[EVAL] acc: {0:2.1f}%, prec: {1:2.1f}%, rec: {2:2.1f}%, f1: {3:2.1f}, auc: {4:2.1f}'.format(\
+        sys.stdout.write('[EVAL] acc: {0:2.2f}%, prec: {1:2.2f}%, rec: {2:2.2f}%, f1: {3:1.3f}, auc: {4:1.3f}'.format(\
                 accuracy * 100, precision * 100, recall * 100, f1, auc) + '\r')
         sys.stdout.flush()
         self._accuracy = accuracy
@@ -431,4 +439,5 @@ class Snowball(nrekit.framework.Model):
         threshold_for_snowball: distant ins with prob > th_for_snowball will be added to extended support set
         '''
         self.pos_class = pos_class 
+
         self._forward_train(support_pos, support_neg, query, distant, threshold=threshold, threshold_for_phase1=threshold_for_snowball, threshold_for_phase2=threshold_for_snowball)
