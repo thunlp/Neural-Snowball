@@ -10,94 +10,30 @@ from torch.nn import functional as F
 import sklearn.metrics 
 import copy
 
-class Siamese(nn.Module):
-
-    def __init__(self, sentence_encoder, hidden_size=230):
-        nn.Module.__init__(self)
-        self.sentence_encoder = sentence_encoder # Should be different from main sentence encoder
-        self.hidden_size = hidden_size
-        self.fc = nn.Linear(hidden_size, 1)
-        self.cost = nn.BCELoss(reduction="none")
-        self.drop = nn.Dropout()
-        self._accuracy = 0.0
-
-    def forward_snowball_style(self, data, positive_support_size, threshold=0.5):
-        support, query, unlabelled = data
-
-        x = self.sentence_encoder(support)[:positive_support_size]
-        y = self.sentence_encoder(unlabelled)
-        assert(y.size(0) == 50 * 5)
-        unlabelled_size = y.size(0)
-        x = x.unsqueeze(1)
-        y = y.unsqueeze(0)
-        dis = torch.pow(x - y, 2).view(-1, self.hidden_size)
-        score = F.sigmoid(self.fc(dis).squeeze())
-        label = torch.zeros((positive_support_size, unlabelled_size)).long().cuda()
-        label[:, :50] = 1
-        label = label.view(-1)
-        self._loss = self.cost(score, label.float()).mean()
-        pred = torch.zeros((score.size(0))).long().cuda()
-        pred[score > threshold] = 1
-        self._accuracy = torch.mean((pred == label).type(torch.FloatTensor))
-        self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
-        self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
-
-    def forward(self, data, num_size, num_class, threshold=0.5):
-        x = self.sentence_encoder(data).contiguous().view(num_class, num_size, -1)
-        x1 = x[:, :num_size//2].contiguous().view(-1, self.hidden_size)
-        x2 = x[:, num_size//2:].contiguous().view(-1, self.hidden_size)
-        y1 = x[:num_class//2,:].contiguous().view(-1, self.hidden_size)
-        y2 = x[num_class//2:,:].contiguous().view(-1, self.hidden_size)
-        # y1 = x[0].contiguous().unsqueeze(0).expand(x.size(0) - 1, -1, -1).contiguous().view(-1, self.hidden_size)
-        # y2 = x[1:].contiguous().view(-1, self.hidden_size)
-        label = torch.zeros((x1.size(0) + y1.size(0))).long().cuda()
-        label[:x1.size(0)] = 1
-        z1 = torch.cat([x1, y1], 0)
-        z2 = torch.cat([x2, y2], 0)
-        dis = torch.pow(z1 - z2, 2)
-        score = F.sigmoid(self.fc(dis).squeeze())
-        self._loss = self.cost(score, label.float()).mean()
-        pred = torch.zeros((score.size(0))).long().cuda()
-        pred[score > threshold] = 1
-        self._accuracy = torch.mean((pred == label).type(torch.FloatTensor))
-        self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
-        self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
-
-    def forward_infer(self, x, y, threshold=0.5):
-        x = self.sentence_encoder(x)
-        support_size = x.size(0)
-        y = self.sentence_encoder(y)
-        x = x.unsqueeze(1)
-        y = y.unsqueeze(0)
-        dis = torch.pow(x - y, 2).view(-1, self.hidden_size)
-        score = F.sigmoid(self.fc(dis).squeeze(-1))
-        pred = torch.zeros((score.size(0))).long().cuda()
-        pred[score > threshold] = 1
-        pred = pred.view(support_size, -1).sum(0)
-        pred[pred >= 1] = 1
-        return pred
+class Proto(nrekit.framework.Model):
     
-class Snowball(nrekit.framework.Model):
-    
-    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230):
+    def __init__(self, sentence_encoder, base_class, siamese_model=None, hidden_size=230):
         nrekit.framework.Model.__init__(self, sentence_encoder)
         self.hidden_size = hidden_size
         self.base_class = base_class
         self.fc = nn.Linear(hidden_size, base_class)
         self.drop = nn.Dropout()
         self.siamese_model = siamese_model
-        self.cost = nn.BCELoss(reduction='none')
+        # self.cost = nn.BCELoss(reduction='none')
+        self.cost = nn.CrossEntropyLoss()
 
-    def forward_base(self, data):
+    def forward_base(self, data, support):
         batch_size = data['word'].size(0)
         x = self.sentence_encoder(data) # (batch_size, hidden_size)
-        x = self.drop(x)
-        x = self.fc(x) # (batch_size, base_class)
-        x = F.sigmoid(x)
+        # x = self.drop(x)
+        support = self.sentence_encoder(support) # (self.base_class, -1, hidden_size)
+        # support = self.drop(support)
+        proto = support.mean(1) # (self.base_class, hidden_size) 
+        dis = -torch.pow(x.unsqueeze(1) - proto.unsqueeze(0), 2).sum(-1) # (self.batch_size, self.base_class)
+
         label = torch.zeros((batch_size, self.base_class)).cuda()
         label.scatter_(1, data['label'].view(-1, 1), 1) # (batch_size, base_class)
-        loss_array = self.__loss__(x, label)
-        self._loss = ((label.view(-1) + 1.0 / self.base_class) * loss_array).mean() * self.base_class
+        self._loss = self.__loss__(x, label)
         _, pred = x.max(-1)
         self._accuracy = self.__accuracy__(pred, data['label'])
 
