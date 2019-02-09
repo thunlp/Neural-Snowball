@@ -21,20 +21,22 @@ class Proto(nrekit.framework.Model):
         self.siamese_model = siamese_model
         # self.cost = nn.BCELoss(reduction='none')
         self.cost = nn.CrossEntropyLoss()
+    
+    def __loss__(self, logits, label):
+        return self.cost(logits, label)
 
     def forward_base(self, data, support):
-        batch_size = data['word'].size(0)
+        batch_size = data['word'].size(0) 
         x = self.sentence_encoder(data) # (batch_size, hidden_size)
-        # x = self.drop(x)
-        support = self.sentence_encoder(support) # (self.base_class, -1, hidden_size)
-        # support = self.drop(support)
-        proto = support.mean(1) # (self.base_class, hidden_size) 
-        dis = -torch.pow(x.unsqueeze(1) - proto.unsqueeze(0), 2).sum(-1) # (self.batch_size, self.base_class)
+        support = self.sentence_encoder(support) # (self.base_class * self.support_size, hidden_size)
+        support = support.view(self.base_class, -1, self.hidden_size) # (self.base_class, self.support_size, hidden_size)
 
-        label = torch.zeros((batch_size, self.base_class)).cuda()
-        label.scatter_(1, data['label'].view(-1, 1), 1) # (batch_size, base_class)
-        self._loss = self.__loss__(x, label)
-        _, pred = x.max(-1)
+        proto = support.mean(1) # (self.base_class, hidden_size) 
+        dis = x.unsqueeze(1) - proto.unsqueeze(0)
+        dis = -torch.pow(dis, 2).sum(-1) # (self.batch_size, self.base_class)
+
+        self._loss = self.__loss__(dis, data['label'])
+        _, pred = dis.max(-1)
         self._accuracy = self.__accuracy__(pred, data['label'])
 
     def forward_new(self, data, positive_support_size, threshold=0.5):
@@ -109,21 +111,7 @@ class Proto(nrekit.framework.Model):
         query: query set
         threshold: ins whose prob > threshold are predicted as positive
         '''
-        # concat
-        support = {}
-        support['word'] = torch.cat([support_pos['word'], support_neg['word']], 0)
-        support['pos1'] = torch.cat([support_pos['pos1'], support_neg['pos1']], 0)
-        support['pos2'] = torch.cat([support_pos['pos2'], support_neg['pos2']], 0)
-        support['mask'] = torch.cat([support_pos['mask'], support_neg['mask']], 0)
-        support['label'] = torch.cat([support_pos['label'], support_neg['label']], 0)
-        
-        # train
-        self._train_finetune_init()
-        support_rep = self.sentence_encoder(support)
-        self._train_finetune(support_rep, support['label'])
-        
-        # test
-        query_prob = self._infer(query)
+        query_prob = self._infer(query, support_pos)
         self._baseline_accuracy = float((query_prob > threshold).sum()) / float(query_prob.shape[0])
         if (query_prob > threshold).sum() == 0:
             self._baseline_prec = 0
@@ -139,49 +127,7 @@ class Proto(nrekit.framework.Model):
         sys.stdout.write('[BASELINE EVAL] acc: {0:2.2f}%, prec: {1:2.2f}%, rec: {2:2.2f}%, f1: {3:1.3f}, auc: {4:1.3f}'.format( \
             self._baseline_accuracy * 100, self._baseline_prec * 100, self._baseline_recall * 100, self._baseline_f1, self._baseline_auc))
         print('')
-
-    def _train_finetune_init(self):
-        # init variables and optimizer
-        self.new_W = Variable(self.fc.weight.mean(0) / 1e3, requires_grad=True)
-        self.new_bias = Variable(torch.zeros((1)), requires_grad=True)
-        self.optimizer = optim.Adam([self.new_W, self.new_bias], 1e-1, weight_decay=1e-5)
-        self.new_W = self.new_W.cuda()
-        self.new_bias = self.new_bias.cuda()
-
-    def _train_finetune(self, data_repre, label):
-        '''
-        train finetune classifier with given data
-        data_repre: sentence representation (encoder's output)
-        label: label
-        '''
         
-        # hyperparameters
-        max_epoch = 20
-        batch_size = 50
-
-        # dropout
-        data_repre = self.drop(data_repre) 
-        
-        # train
-        print('')
-        for epoch in range(max_epoch):
-            max_iter = data_repre.size(0) // batch_size
-            if data_repre.size(0) % batch_size != 0:
-                max_iter += 1
-            order = list(range(data_repre.size(0)))
-            random.shuffle(order)
-            for i in range(max_iter):            
-                x = data_repre[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
-                batch_label = label[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
-                x = torch.matmul(x, self.new_W) + self.new_bias # (batch_size, 1)
-                x = F.sigmoid(x)
-                iter_loss = self.__loss__(x, batch_label.float()).mean()
-                self.optimizer.zero_grad()
-                iter_loss.backward(retain_graph=True)
-                self.optimizer.step()
-                sys.stdout.write('[snowball finetune] epoch {0:4} iter {1:4} | loss: {2:2.6f}'.format(epoch, i, iter_loss) + '\r')
-                sys.stdout.flush()
-
     def _add_ins_to_data(self, dataset_dst, dataset_src, ins_id, label=None):
         '''
         add one instance from dataset_src to dataset_dst (list)
@@ -230,16 +176,20 @@ class Proto(nrekit.framework.Model):
         dataset['pos2'] = torch.stack(dataset['pos2'], 0).cuda()
         dataset['mask'] = torch.stack(dataset['mask'], 0).cuda()
 
-    def _infer(self, dataset):
+    def _infer(self, dataset, support_pos):
         '''
         get prob output of the finetune network with the input dataset
         dataset: input dataset
         return: prob output of the finetune network
         '''
         x = self.sentence_encoder(dataset)
-        x = torch.matmul(x, self.new_W) + self.new_bias # (batch_size, 1)
-        x = F.sigmoid(x)
-        return x.view(-1)
+        support = self.sentence_encoder(support_pos) 
+        proto = support.mean(0) # (hidden_size)
+        dis = x - proto.unsqueeze(0)
+        dis = -torch.pow(dis, 2).sum(-1) # (batch_size)
+        dis = torch.exp(dis)
+        # dis = torch.sigmoid(dis) * 2
+        return dis
 
     def _forward_train(self, support_pos, support_neg, query, distant, threshold=0.5, threshold_for_phase1=0.8, threshold_for_phase2=0.9):
         '''
@@ -271,10 +221,9 @@ class Proto(nrekit.framework.Model):
         # snowball
         exist_id = {}
         print('\n-------------------------------------------------------')
-        for snowball_iter in range(snowball_max_iter):
-            print('###### snowball iter ' + str(snowball_iter))
-            # phase 1: expand positive support set from distant dataset (with same entity pairs)
-
+        for snowball_iter in range(snowball_max_iter): 
+            print('###### snowball iter ' + str(snowball_iter)) 
+            # phase 1: expand positive support set from distant dataset (with same entity pairs) 
             ## get all entpairs and their ins in positive support set
             old_support_pos_label = support_pos['label'] + 0
             entpair_support = {}

@@ -246,7 +246,10 @@ class JSONFileDataLoader(FileDataLoader):
             json.dump(self.rel2id, open(os.path.join(processed_data_dir, name_prefix + '_rel2id.json'), 'w'))
             json.dump(self.entpair2scope, open(os.path.join(processed_data_dir, name_prefix + '_entpair2scope.json'), 'w'))
             print("Finish storing")
-
+        
+        self.id2rel = {}
+        for rel in self.rel2id:
+            self.id2rel[self.rel2id[rel]] = rel
         self.index = list(range(self.instance_tot))
         random.shuffle(self.index)
         self.current = 0
@@ -272,6 +275,34 @@ class JSONFileDataLoader(FileDataLoader):
                 batch[key] = batch[key].cuda()
 
         return batch
+
+    def next_support(self, support_size):
+        support = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+        for i in range(self.rel_tot):
+            scope = self.rel2scope[self.id2rel[i]]
+            indices = np.random.choice(list(range(scope[0], scope[1])), support_size, False)
+            support['word'].append(self.data_word[indices])
+            support['pos1'].append(self.data_pos1[indices])
+            support['pos2'].append(self.data_pos2[indices])
+            support['mask'].append(self.data_mask[indices])
+
+        support['word'] = np.concatenate(support['word'], 0)
+        support['pos1'] = np.concatenate(support['pos1'], 0)
+        support['pos2'] = np.concatenate(support['pos2'], 0)
+        support['mask'] = np.concatenate(support['mask'], 0)
+
+        support['word'] = Variable(torch.from_numpy(support['word']).long()) 
+        support['pos1'] = Variable(torch.from_numpy(support['pos1']).long())
+        support['pos2'] = Variable(torch.from_numpy(support['pos2']).long())
+        support['mask'] = Variable(torch.from_numpy(support['mask']).long())
+
+        # To cuda
+        if self.cuda:
+            for key in support:
+                support[key] = support[key].cuda()
+
+        return support
+
 
     def next_multi_class(self, num_size, num_class):
         '''
