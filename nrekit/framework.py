@@ -280,16 +280,19 @@ class Framework:
         iter_brecall = 0.0
         for it in range(eval_iter):
             support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class)
-            model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
+            # model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
 
             iter_bright += model._baseline_f1
             iter_bprec += model._baseline_prec
             iter_brecall += model._baseline_recall
 
-            iter_right += model._f1
-            iter_prec += model._prec
-            iter_recall += model._recall
+            # iter_right += model._f1
+            # iter_prec += model._prec
+            # iter_recall += model._recall
+            iter_right = 0
+            iter_prec = 0         
+            iter_recall = 0          
             
             iter_sample += 1
             sys.stdout.write('[EVAL] step: {0:4} | f1: {1:1.4f}, prec: {2:3.2f}%, recall: {3:3.2f}% | [baseline] f1: {4:1.4f}, prec: {5:3.2f}%, rec: {6:3.2f}%'.format(it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
@@ -340,6 +343,8 @@ class PretrainFramework:
               val_step=2000,
               cuda=True,
               pretrain_model=None,
+              support=False,
+              support_size=10,
               optimizer=optim.SGD):
         '''
         model: a FewShotREModel instance
@@ -369,7 +374,8 @@ class PretrainFramework:
         if pretrain_model:
             checkpoint = self.__load_model__(pretrain_model)
             model.load_state_dict(checkpoint['state_dict'])
-            start_iter = checkpoint['iter'] + 1
+            # start_iter = checkpoint['iter'] + 1
+            start_iter = 0
         else:
             start_iter = 0
 
@@ -386,7 +392,25 @@ class PretrainFramework:
         for it in range(start_iter, start_iter + train_iter):
             scheduler.step()
             batch_data = self.train_data_loader.next_batch(batch_size)
-            model.forward_base(batch_data)
+            '''
+            batch_data = self.train_data_loader.next_support(batch_size // 5)
+            batch_data['word'] = batch_data['word'].view(-1, self.train_data_loader.max_length)
+            batch_data['word'] = batch_data['word'].view(-1, self.train_data_loader.max_length)
+            batch_data['word'] = batch_data['word'].view(-1, self.train_data_loader.max_length)
+            batch_data['word'] = batch_data['word'].view(-1, self.train_data_loader.max_length)
+            batch_data['label'] = [0] * (batch_size // 5)
+            batch_data['label'] += [1] * (batch_size // 5)
+            batch_data['label'] += [2] * (batch_size // 5)
+            batch_data['label'] += [3] * (batch_size // 5)
+            batch_data['label'] += [4] * (batch_size // 5)
+            batch_data['label'] = Variable(torch.from_numpy(np.array(batch_data['label'])).long()).cuda() 
+            '''
+
+            if support:
+                support_data = self.train_data_loader.next_support(support_size)
+                model.forward_base(batch_data, support_data)
+            else:
+                model.forward_base(batch_data)
             loss = model.loss()
             right = model.accuracy()
             opt.zero_grad()
@@ -407,7 +431,7 @@ class PretrainFramework:
 
             if (it + 1) % val_step == 0:
                 print('')
-                acc = self.eval_encoder(model, eval_iter=val_iter)
+                acc = self.eval_encoder(model, eval_iter=val_iter, support=support)
                 print('')
                 if acc > best_acc:
                     print('Best checkpoint')
@@ -423,7 +447,9 @@ class PretrainFramework:
     def eval_encoder(self,
             model,
             eval_iter=2000,
-            batch_size=500):
+            batch_size=500,
+            support_size=10,
+            support=False):
         '''
         model: a FewShotREModel instance
         eval_iter: num of iterations of evaluation
@@ -435,7 +461,11 @@ class PretrainFramework:
         iter_sample = 0.0
         for it in range(eval_iter):
             batch_data = self.val_data_loader.next_batch(batch_size)
-            model.forward_base(batch_data)
+            if support:
+                support_data = self.val_data_loader.next_support(support_size)
+                model.forward_base(batch_data, support_data)
+            else:
+                model.forward_base(batch_data)
             right = model.accuracy()
 
             iter_right += self.item(right.data)
