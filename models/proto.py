@@ -187,8 +187,8 @@ class Proto(nrekit.framework.Model):
         proto = support.mean(0) # (hidden_size)
         dis = x - proto.unsqueeze(0)
         dis = -torch.pow(dis, 2).sum(-1) # (batch_size)
-        dis = torch.exp(dis)
-        # dis = torch.sigmoid(dis) * 2
+        # dis = torch.exp(dis)
+        dis = torch.sigmoid(dis) * 2
         return dis
 
     def _forward_train(self, support_pos, support_neg, query, distant, threshold=0.5, threshold_for_phase1=0.8, threshold_for_phase2=0.9):
