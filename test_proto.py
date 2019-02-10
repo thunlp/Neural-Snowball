@@ -13,19 +13,13 @@ distant = JSONFileDataLoader('./data/distant.json', './data/glove.6B.50d.json', 
 
 framework = nrekit.framework.Framework(train_data_loader, val_data_loader, test_data_loader, distant)
 sentence_encoder = nrekit.sentence_encoder.CNNSentenceEncoder(train_data_loader.word_vec_mat, max_length)
-sentence_encoder2 = nrekit.sentence_encoder.CNNSentenceEncoder(train_data_loader.word_vec_mat, max_length)
-model2 = models.siamese.Siamese(sentence_encoder2, hidden_size=230)
-model = models.siamese.Snowball(sentence_encoder, base_class=train_data_loader.rel_tot, siamese_model=model2, hidden_size=230)
+model = models.proto.Proto(sentence_encoder, base_class=train_data_loader.rel_tot, siamese_model=None, hidden_size=230)
 
 # load pretrain
-checkpoint = torch.load('./checkpoint/cnn_encoder.pth.tar')['state_dict']
-checkpoint2 = torch.load('./checkpoint/cnn_siamese.pth.tar')['state_dict']
-for key in checkpoint2:
-    checkpoint['siamese_model.' + key] = checkpoint2[key]
+checkpoint = torch.load('./checkpoint/proto_encoder.pth.tar')['state_dict']
 model.load_state_dict(checkpoint)
 model.cuda()
-model.train()
-model_name = 'siamese'
+model_name = 'proto'
 
 # eval
 # framework.train(model, model_name, model2=model2)
