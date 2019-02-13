@@ -337,7 +337,7 @@ class JSONFileDataLoader(FileDataLoader):
 
         return batch
 
-    def next_new_relation(self, train_data_loader, support_size, query_size, unlabelled_size, query_class, negative_rate=5):
+    def next_new_relation(self, train_data_loader, support_size, query_size, unlabelled_size, query_class, negative_rate=5, use_train_neg=False):
         '''
         support_size: The num of instances for positive / negative. The total support size is support_size * 2.
         query_size: The num of instances for ONE class in query set. The total query size is query_size * query_class.
@@ -375,13 +375,19 @@ class JSONFileDataLoader(FileDataLoader):
         unlabelled_set['mask'].append(unlabelled_mask)
 
         # Other query classes (negative)
+        if use_train_neg:
+            neg_loader = train_data_loader
+            target_classes = random.sample(neg_loader.rel2scope.keys(), query_class) # discard 0 class 
+        else:
+            neg_loader = self
+
         for i, class_name in enumerate(target_classes[1:]):
-            scope = self.rel2scope[class_name]
+            scope = neg_loader.rel2scope[class_name]
             indices = np.random.choice(list(range(scope[0], scope[1])), query_size + unlabelled_size, False)
-            query_word, unlabelled_word, _ = np.split(self.data_word[indices], [query_size, query_size + unlabelled_size])  
-            query_pos1, unlabelled_pos1, _ = np.split(self.data_pos1[indices], [query_size, query_size + unlabelled_size])    
-            query_pos2, unlabelled_pos2, _ = np.split(self.data_pos2[indices], [query_size, query_size + unlabelled_size])    
-            query_mask, unlabelled_mask, _ = np.split(self.data_mask[indices], [query_size, query_size + unlabelled_size])    
+            query_word, unlabelled_word, _ = np.split(neg_loader.data_word[indices], [query_size, query_size + unlabelled_size])  
+            query_pos1, unlabelled_pos1, _ = np.split(neg_loader.data_pos1[indices], [query_size, query_size + unlabelled_size])    
+            query_pos2, unlabelled_pos2, _ = np.split(neg_loader.data_pos2[indices], [query_size, query_size + unlabelled_size])    
+            query_mask, unlabelled_mask, _ = np.split(neg_loader.data_mask[indices], [query_size, query_size + unlabelled_size])    
 
             query_set['word'].append(query_word)
             query_set['pos1'].append(query_pos1)
@@ -498,7 +504,7 @@ class JSONFileDataLoader(FileDataLoader):
 
         return candidate
    
-    def get_one_new_relation(self, train_data_loader, support_pos_size, support_neg_rate, query_size, query_class):
+    def get_one_new_relation(self, train_data_loader, support_pos_size, support_neg_rate, query_size, query_class, use_train_neg=False):
         '''
         get data for one new relation
         train_data_loader: training data loader
@@ -541,13 +547,19 @@ class JSONFileDataLoader(FileDataLoader):
         query['label'] += [1] * query_size
 
         # Other query classes (negative)
+        if use_train_neg:
+            neg_loader = train_data_loader
+            target_classes = random.sample(neg_loader.rel2scope.keys(), query_class) # discard 0 class 
+        else:
+            neg_loader = self
+
         for i, class_name in enumerate(target_classes[1:]):
-            scope = self.rel2scope[class_name]
+            scope = neg_loader.rel2scope[class_name]
             indices = np.random.choice(list(range(scope[0], scope[1])), query_size, False)
-            query['word'].append(self.data_word[indices])  
-            query['pos1'].append(self.data_pos1[indices])    
-            query['pos2'].append(self.data_pos2[indices])    
-            query['mask'].append(self.data_mask[indices])
+            query['word'].append(neg_loader.data_word[indices])  
+            query['pos1'].append(neg_loader.data_pos1[indices])    
+            query['pos2'].append(neg_loader.data_pos2[indices])    
+            query['mask'].append(neg_loader.data_mask[indices])
             query['label'] += [0] * query_size
 
         query['word'] = np.concatenate(query['word'], 0)
@@ -578,4 +590,20 @@ class JSONFileDataLoader(FileDataLoader):
             support_neg[key] = support_neg[key].cuda()
 
         return support_pos, support_neg, query, target_classes[0]
+
+    def get_all(self, rel):
+        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+        current_index = list(range(self.rel2scope[rel][0], self.rel2scope[rel][1]))
+        batch['word'] = Variable(torch.from_numpy(self.data_word[current_index]).long()) 
+        batch['pos1'] = Variable(torch.from_numpy(self.data_pos1[current_index]).long())
+        batch['pos2'] = Variable(torch.from_numpy(self.data_pos2[current_index]).long())
+        batch['mask'] = Variable(torch.from_numpy(self.data_mask[current_index]).long())
+        batch['label']= Variable(torch.from_numpy(self.data_label[current_index]).long())
+
+        # To cuda
+        if self.cuda:
+            for key in batch:
+                batch[key] = batch[key].cuda()
+
+        return batch
 

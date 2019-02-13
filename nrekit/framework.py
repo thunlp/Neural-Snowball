@@ -72,13 +72,7 @@ class Framework:
             raise Exception("No checkpoint found at '%s'" % ckpt)
     
     def item(self, x):
-        '''
-        PyTorch before and after 0.4
-        '''
-        if int(torch.__version__.split('.')[1]) < 4:
-            return x[0]
-        else:
-            return x.item()
+        return x.item()
 
     def eval_siamese(self,
             model,
@@ -279,20 +273,17 @@ class Framework:
         iter_bprec = 0.0
         iter_brecall = 0.0
         for it in range(eval_iter):
-            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class)
-            # model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
+            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=True)
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
+            model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
 
             iter_bright += model._baseline_f1
             iter_bprec += model._baseline_prec
             iter_brecall += model._baseline_recall
 
-            # iter_right += model._f1
-            # iter_prec += model._prec
-            # iter_recall += model._recall
-            iter_right = 0
-            iter_prec = 0         
-            iter_recall = 0          
+            iter_right += model._f1
+            iter_prec += model._prec
+            iter_recall += model._recall
             
             iter_sample += 1
             sys.stdout.write('[EVAL] step: {0:4} | f1: {1:1.4f}, prec: {2:3.2f}%, recall: {3:3.2f}% | [baseline] f1: {4:1.4f}, prec: {5:3.2f}%, rec: {6:3.2f}%'.format(it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
@@ -322,13 +313,7 @@ class PretrainFramework:
             raise Exception("No checkpoint found at '%s'" % ckpt)
     
     def item(self, x):
-        '''
-        PyTorch before and after 0.4
-        '''
-        if int(torch.__version__.split('.')[1]) < 4:
-            return x[0]
-        else:
-            return x.item()
+        return x.item()
 
     def train_encoder(self,
               model,
