@@ -30,6 +30,7 @@ class Proto(nrekit.framework.Model):
     
     def _train_finetune(self, support_pos_rep, support_label):
         self.proto = support_pos_rep.mean(0)
+        # self.max_dis = torch.pow(support_pos_rep - self.proto.unsqueeze(0), 2).sum(-1).max(0)[0].item()
 
     def forward_base(self, data, support):
         batch_size = data['word'].size(0) 
@@ -214,7 +215,7 @@ class Proto(nrekit.framework.Model):
             protos.append(proto)
         self.protos = torch.stack(protos, 0)
 
-    def _infer(self, dataset, support_pos=None):
+    def _infer(self, dataset, support_pos=None, sub=True):
         '''
         get prob output of the finetune network with the input dataset
         dataset: input dataset
@@ -236,8 +237,9 @@ class Proto(nrekit.framework.Model):
 
         # dis3 = support - proto.unsqueeze(0)
         # dis3, _ = torch.pow(dis3, 2).sum(-1).max(-1)
-
-        dis = dis2 - dis
+        
+        if sub:
+            dis = dis2 - dis
 
         # -- cosine distance --
         # proto = self.fc_proto(proto)
@@ -270,11 +272,17 @@ class Proto(nrekit.framework.Model):
         # copy
         original_support_pos = copy.deepcopy(support_pos)
 
+        # initial proto
+        support_pos_rep = self.sentence_encoder(support_pos)
+        self.proto = support_pos_rep.mean(0)
+        # self.max_dis = torch.pow(support_pos_rep - self.proto.unsqueeze(0), 2).sum(-1).max(0)[0].item() * 0.5
+
         # snowball
         exist_id = {}
         print('\n-------------------------------------------------------')
         for snowball_iter in range(snowball_max_iter): 
             print('###### snowball iter ' + str(snowball_iter)) 
+
             # phase 1: expand positive support set from distant dataset (with same entity pairs) 
             ## get all entpairs and their ins in positive support set
             old_support_pos_label = support_pos['label'] + 0
@@ -303,10 +311,11 @@ class Proto(nrekit.framework.Model):
                 if len(entpair_support[entpair]['word']) == 0 or len(entpair_distant[entpair]['word']) == 0:
                     continue
                 # pick_or_not = self.siamese_model.forward_infer(entpair_support[entpair], entpair_distant[entpair], threshold=threshold_for_phase1)
-                pick_or_not = self.siamese_model.forward_infer(original_support_pos, entpair_distant[entpair], threshold=threshold_for_phase1)
+                # pick_or_not = self.siamese_model.forward_infer(original_support_pos, entpair_distant[entpair], threshold=threshold_for_phase1)
+                pick_or_not = self._infer(entpair_distant[entpair]) > 0
       
                 for i in range(pick_or_not.size(0)):
-                    if pick_or_not[i] == 1:
+                    if pick_or_not[i]:
                         self._add_ins_to_vdata(support_pos, entpair_distant[entpair], i, label=1)
                         exist_id[entpair_distant[entpair]['id'][i]] = 1
                 self._phase1_add_num += pick_or_not.sum()
@@ -325,12 +334,25 @@ class Proto(nrekit.framework.Model):
             # phase 2: use the new classifier to pick more extended support ins
             self._phase2_add_num = 0
             candidate = distant.get_random_candidate(self.pos_class, candidate_num_class, candidate_num_ins_per_class)
+            ## -- method 1: directly use the classifier --
             candidate_prob = self._infer(candidate)
-            for i in range(candidate_prob.size(0)):
-                if (candidate_prob[i] > threshold_for_phase2) and not (candidate['id'][i] in exist_id):
+            # for i in range(candidate_prob.size(0)):
+            #     if (candidate_prob[i] > 0) and not (candidate['id'][i] in exist_id):
+            #     # if (candidate_prob[i] > threshold_for_phase2) and not (candidate['id'][i] in exist_id):
+            #     # if (candidate_prob[i] < self.max_dis) and not (candidate['id'][i] in exist_id):
+            #         exist_id[candidate['id'][i]] = 1 
+            #         self._phase2_add_num += 1
+            #         self._add_ins_to_vdata(support_pos, candidate, i, label=1)
+            
+            ## -- method 2: use siamese network --
+            pick_or_not = self.siamese_model.forward_infer(support_pos, candidate, threshold=threshold_for_phase2)
+            for i in range(pick_or_not.size(0)):
+                if pick_or_not[i] == 1 and not (candidate['id'][i] in exist_id):
+                # if pick_or_not[i] == 1 and (candidate_prob[i] > 0) and not (candidate['id'][i] in exist_id):
                     exist_id[candidate['id'][i]] = 1 
                     self._phase2_add_num += 1
                     self._add_ins_to_vdata(support_pos, candidate, i, label=1)
+            self._phase2_total = pick_or_not.size(0)
 
             ## build new support set
             support_pos_rep = self.sentence_encoder(support_pos)
@@ -340,7 +362,7 @@ class Proto(nrekit.framework.Model):
             ## finetune
             self._train_finetune(support_pos_rep, support_label)
             self._forward_eval_binary(query, threshold)
-            print('\nphase2 add {} ins'.format(self._phase2_add_num))
+            print('\nphase2 add {} ins / {}'.format(self._phase2_add_num, self._phase2_total))
 
     def _forward_eval_binary(self, query, threshold=0.5):
         '''
