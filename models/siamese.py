@@ -60,6 +60,8 @@ class Siamese(nn.Module):
         pred = torch.zeros((score.size(0))).long().cuda()
         pred[score > threshold] = 1
         self._accuracy = torch.mean((pred == label).type(torch.FloatTensor))
+        pred = pred.cpu().detach().numpy()
+        label = label.cpu().detach().numpy()
         self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
         self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
 
