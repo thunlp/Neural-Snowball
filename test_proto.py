@@ -31,4 +31,4 @@ model_name = 'proto'
 # framework.eval_siamese(model2, threshold=0.99)
 # print('')
 model.get_protos(train_data_loader)
-framework.eval(model, threshold=0, threshold_for_snowball=0.99)
+framework.eval(model, threshold=0, threshold_for_snowball=0.9, support_size=10)

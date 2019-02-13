@@ -76,7 +76,8 @@ class Siamese(nn.Module):
         pred = torch.zeros((score.size(0))).long().cuda()
         pred[score > threshold] = 1
         pred = pred.view(support_size, -1).sum(0)
-        pred[pred >= 1] = 1
+        pred[pred < support_size // 2] = 0
+        pred[pred > 0] = 1
         return pred
     
 class Snowball(nrekit.framework.Model):
@@ -189,18 +190,19 @@ class Snowball(nrekit.framework.Model):
         self._train_finetune(support_rep, support['label'])
         
         # test
-        query_prob = self._infer(query)
-        self._baseline_accuracy = float((query_prob > threshold).sum()) / float(query_prob.shape[0])
+        query_prob = self._infer(query, support_pos).cpu().detach().numpy()
+        label = query['label'].cpu().detach().numpy()
+        self._baseline_accuracy = float(np.logical_or(np.logical_and(query_prob > threshold, label == 1), np.logical_and(query_prob < threshold, label == 0)).sum()) / float(query_prob.shape[0])
         if (query_prob > threshold).sum() == 0:
             self._baseline_prec = 0
         else:        
-            self._baseline_prec = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query_prob > threshold).sum())
-        self._baseline_recall = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query['label'] == 1).sum())
+            self._baseline_prec = float(np.logical_and(query_prob > threshold, label == 1).sum()) / float((query_prob > threshold).sum())
+        self._baseline_recall = float(np.logical_and(query_prob > threshold, label == 1).sum()) / float((label == 1).sum())
         if self._baseline_prec + self._baseline_recall == 0:
             self._baseline_f1 = 0
         else:
             self._baseline_f1 = float(2.0 * self._baseline_prec * self._baseline_recall) / float(self._baseline_prec + self._baseline_recall)
-        self._baseline_auc = sklearn.metrics.roc_auc_score(query['label'].cpu().detach().numpy(), query_prob.cpu().detach().numpy())
+        self._baseline_auc = sklearn.metrics.roc_auc_score(label, query_prob)
         print('')
         sys.stdout.write('[BASELINE EVAL] acc: {0:2.2f}%, prec: {1:2.2f}%, rec: {2:2.2f}%, f1: {3:1.3f}, auc: {4:1.3f}'.format( \
             self._baseline_accuracy * 100, self._baseline_prec * 100, self._baseline_recall * 100, self._baseline_f1, self._baseline_auc))
