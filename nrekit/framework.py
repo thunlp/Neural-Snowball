@@ -238,7 +238,7 @@ class Framework:
 
     def eval(self,
             model,
-            support_size=10, query_size=10, unlabelled_size=50, query_class=10,
+            support_size=10, query_size=50, unlabelled_size=50, query_class=5,
             s_num_size=10, s_num_class=10,
             eval_iter=2000,
             ckpt=None,
@@ -273,7 +273,7 @@ class Framework:
         iter_bprec = 0.0
         iter_brecall = 0.0
         for it in range(eval_iter):
-            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=True)
+            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=False)
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
             model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
 

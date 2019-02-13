@@ -289,6 +289,7 @@ class Proto(nrekit.framework.Model):
             
             ## pick all ins with the same entpairs in distant data and choose with siamese network
             self._phase1_add_num = 0 # total number of snowball instances
+            self._phase1_total = 0
             for entpair in entpair_support:
                 raw = distant.get_same_entpair_ins(entpair) # ins with the same entpair
                 if raw is None:
@@ -309,6 +310,7 @@ class Proto(nrekit.framework.Model):
                         self._add_ins_to_vdata(support_pos, entpair_distant[entpair], i, label=1)
                         exist_id[entpair_distant[entpair]['id'][i]] = 1
                 self._phase1_add_num += pick_or_not.sum()
+                self._phase1_total += pick_or_not.size(0)
             
             ## build new support set
             support_pos_rep = self.sentence_encoder(support_pos)
@@ -318,7 +320,7 @@ class Proto(nrekit.framework.Model):
             ## finetune
             self._train_finetune(support_pos_rep, support_label)
             self._forward_eval_binary(query, threshold)
-            print('\nphase1 add {} ins'.format(self._phase1_add_num))
+            print('\nphase1 add {} ins / {}'.format(self._phase1_add_num, self._phase1_total))
 
             # phase 2: use the new classifier to pick more extended support ins
             self._phase2_add_num = 0
