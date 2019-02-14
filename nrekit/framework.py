@@ -272,6 +272,7 @@ class Framework:
         iter_bright = 0.0
         iter_bprec = 0.0
         iter_brecall = 0.0
+        snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32)]
         for it in range(eval_iter):
             support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=False)
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
@@ -288,6 +289,12 @@ class Framework:
             iter_sample += 1
             sys.stdout.write('[EVAL] step: {0:4} | f1: {1:1.4f}, prec: {2:3.2f}%, recall: {3:3.2f}% | [baseline] f1: {4:1.4f}, prec: {5:3.2f}%, rec: {6:3.2f}%'.format(it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
             sys.stdout.flush()
+            
+            print("")
+            print("[SNOWBALL ITER RESULT:]")
+            for i in range(len(model._metric)):
+                snowball_metric[i] += model._metric[i]
+                print("iter {} : {}".format(i, snowball_metric[i] / iter_sample))
         return iter_right / iter_sample
 
 class PretrainFramework:

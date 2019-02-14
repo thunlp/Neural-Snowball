@@ -31,4 +31,4 @@ model_name = 'siamese'
 # framework.train(model, model_name, model2=model2)
 # framework.eval_siamese(model2, threshold=0.99)
 # print('')
-framework.eval(model, threshold=0.5, threshold_for_snowball=0.99)
+framework.eval(model, threshold=0.5, threshold_for_snowball=0.99, support_size=10)

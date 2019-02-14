@@ -76,6 +76,36 @@ class Siamese(nn.Module):
         pred = torch.zeros((score.size(0))).long().cuda()
         pred[score > threshold] = 1
         pred = pred.view(support_size, -1).sum(0)
+        pred[pred < 1] = 0
+        pred[pred > 0] = 1
+        return pred
+
+    def forward_infer_sort(self, x, y, threshold=0.5):
+        x = self.sentence_encoder(x)
+        support_size = x.size(0)
+        y = self.sentence_encoder(y)
+        x = x.unsqueeze(1)
+        y = y.unsqueeze(0)
+        dis = torch.pow(x - y, 2)
+        score = F.sigmoid(self.fc(dis).squeeze(-1)).mean(0)
+        pred = []
+        for i in range(score.size(0)):
+            pred.append((score[i], i))
+        pred.sort(key=lambda x: x[0], reverse=True)
+        print(pred)
+        return pred
+
+    def forward_infer_half(self, x, y, threshold=0.5):
+        x = self.sentence_encoder(x)
+        support_size = x.size(0)
+        y = self.sentence_encoder(y)
+        x = x.unsqueeze(1)
+        y = y.unsqueeze(0)
+        dis = torch.pow(x - y, 2).view(-1, self.hidden_size)
+        score = F.sigmoid(self.fc(dis).squeeze(-1))
+        pred = torch.zeros((score.size(0))).long().cuda()
+        pred[score > threshold] = 1
+        pred = pred.view(support_size, -1).sum(0)
         pred[pred < support_size // 2] = 0
         pred[pred > 0] = 1
         return pred
@@ -190,7 +220,7 @@ class Snowball(nrekit.framework.Model):
         self._train_finetune(support_rep, support['label'])
         
         # test
-        query_prob = self._infer(query, support_pos).cpu().detach().numpy()
+        query_prob = self._infer(query).cpu().detach().numpy()
         label = query['label'].cpu().detach().numpy()
         self._baseline_accuracy = float(np.logical_or(np.logical_and(query_prob > threshold, label == 1), np.logical_and(query_prob < threshold, label == 0)).sum()) / float(query_prob.shape[0])
         if (query_prob > threshold).sum() == 0:
@@ -322,7 +352,7 @@ class Snowball(nrekit.framework.Model):
         '''
 
         # hyperparameters
-        snowball_max_iter = 2
+        snowball_max_iter = 5
         sys.stdout.flush()
         candidate_num_class = 20
         candidate_num_ins_per_class = 100
@@ -332,6 +362,7 @@ class Snowball(nrekit.framework.Model):
         
         # init
         self._train_finetune_init()
+        self._metric = []
 
         # copy
         original_support_pos = copy.deepcopy(support_pos)
@@ -356,6 +387,7 @@ class Snowball(nrekit.framework.Model):
             
             ## pick all ins with the same entpairs in distant data and choose with siamese network
             self._phase1_add_num = 0 # total number of snowball instances
+            self._phase1_total = 0
             for entpair in entpair_support:
                 raw = distant.get_same_entpair_ins(entpair) # ins with the same entpair
                 if raw is None:
@@ -369,13 +401,15 @@ class Snowball(nrekit.framework.Model):
                 if len(entpair_support[entpair]['word']) == 0 or len(entpair_distant[entpair]['word']) == 0:
                     continue
                 # pick_or_not = self.siamese_model.forward_infer(entpair_support[entpair], entpair_distant[entpair], threshold=threshold_for_phase1)
-                pick_or_not = self.siamese_model.forward_infer(original_support_pos, entpair_distant[entpair], threshold=threshold_for_phase1)
+                pick_or_not = self.siamese_model.forward_infer_half(original_support_pos, entpair_distant[entpair], threshold=threshold_for_phase1)
+                # pick_or_not = self._infer(entpair_distant[entpair]) > threshold
       
                 for i in range(pick_or_not.size(0)):
-                    if pick_or_not[i] == 1:
+                    if pick_or_not[i]:
                         self._add_ins_to_vdata(support_pos, entpair_distant[entpair], i, label=1)
                         exist_id[entpair_distant[entpair]['id'][i]] = 1
                 self._phase1_add_num += pick_or_not.sum()
+                self._phase1_total += pick_or_not.size(0)
             
             ## build new support set
             support_pos_rep = self.sentence_encoder(support_pos)
@@ -385,14 +419,21 @@ class Snowball(nrekit.framework.Model):
             ## finetune
             self._train_finetune(support_rep, support_label)
             self._forward_eval_binary(query, threshold)
-            print('\nphase1 add {} ins'.format(self._phase1_add_num))
+            print('\nphase1 add {} ins / {}'.format(self._phase1_add_num, self._phase1_total))
 
             # phase 2: use the new classifier to pick more extended support ins
             self._phase2_add_num = 0
             candidate = distant.get_random_candidate(self.pos_class, candidate_num_class, candidate_num_ins_per_class)
+
+            ## -- method 1: directly use the classifier --
             candidate_prob = self._infer(candidate)
+            ## -- method 2: use siamese network --
+            pick_or_not = self.siamese_model.forward_infer_half(support_pos, candidate, threshold=threshold_for_phase2)
+
+            self._phase2_total = candidate_prob.size(0)
             for i in range(candidate_prob.size(0)):
-                if (candidate_prob[i] > threshold_for_phase2) and not (candidate['id'][i] in exist_id):
+                # if (candidate_prob[i] > threshold_for_phase2) and not (candidate['id'][i] in exist_id):
+                if (pick_or_not[i]) and (candidate_prob[i] > threshold_for_phase2) and not (candidate['id'][i] in exist_id):
                     exist_id[candidate['id'][i]] = 1 
                     self._phase2_add_num += 1
                     self._add_ins_to_vdata(support_pos, candidate, i, label=1)
@@ -405,7 +446,8 @@ class Snowball(nrekit.framework.Model):
             ## finetune
             self._train_finetune(support_rep, support_label)
             self._forward_eval_binary(query, threshold)
-            print('\nphase2 add {} ins'.format(self._phase2_add_num))
+            self._metric.append(np.array([self._f1, self._prec, self._recall]))
+            print('\nphase2 add {} ins / {}'.format(self._phase2_add_num, self._phase2_total))
 
     def _forward_eval_binary(self, query, threshold=0.5):
         '''
@@ -414,18 +456,19 @@ class Snowball(nrekit.framework.Model):
         threshold: ins with prob > threshold will be classified as positive
         return (accuracy at threshold, precision at threshold, recall at threshold, f1 at threshold, auc), 
         '''
-        query_prob = self._infer(query)
-        accuracy = float((query_prob > threshold).sum()) / float(query_prob.shape[0])
+        query_prob = self._infer(query).cpu().detach().numpy()
+        label = query['label'].cpu().detach().numpy()
+        accuracy = float(np.logical_or(np.logical_and(query_prob > threshold, label == 1), np.logical_and(query_prob < threshold, label == 0)).sum()) / float(query_prob.shape[0])
         if (query_prob > threshold).sum() == 0:
             precision = 0
         else:
-            precision = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query_prob > threshold).sum())
-        recall = float(np.logical_and(query_prob > threshold, query['label'] == 1).sum()) / float((query['label'] == 1).sum())
+            precision = float(np.logical_and(query_prob > threshold, label == 1).sum()) / float((query_prob > threshold).sum())
+        recall = float(np.logical_and(query_prob > threshold, label == 1).sum()) / float((label == 1).sum())
         if precision + recall == 0:
             f1 = 0
         else:
             f1 = float(2.0 * precision * recall) / float(precision + recall)
-        auc = sklearn.metrics.roc_auc_score(query['label'].cpu().detach().numpy(), query_prob.cpu().detach().numpy())
+        auc = sklearn.metrics.roc_auc_score(label, query_prob)
         print('')
         sys.stdout.write('[EVAL] acc: {0:2.2f}%, prec: {1:2.2f}%, rec: {2:2.2f}%, f1: {3:1.3f}, auc: {4:1.3f}'.format(\
                 accuracy * 100, precision * 100, recall * 100, f1, auc) + '\r')
