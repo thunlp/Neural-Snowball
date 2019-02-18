@@ -92,7 +92,6 @@ class Siamese(nn.Module):
         for i in range(score.size(0)):
             pred.append((score[i], i))
         pred.sort(key=lambda x: x[0], reverse=True)
-        print(pred)
         return pred
 
     def forward_infer_half(self, x, y, threshold=0.5):
@@ -246,13 +245,17 @@ class Snowball(nrekit.framework.Model):
         self.new_W = self.new_W.cuda()
         self.new_bias = self.new_bias.cuda()
 
-    def _train_finetune(self, data_repre, label):
+    def _train_finetune(self, data_repre, label, learning_rate=None, weight_decay=1e-5):
         '''
         train finetune classifier with given data
         data_repre: sentence representation (encoder's output)
         label: label
         '''
-        
+
+        optimizer = self.optimizer
+        if learning_rate is not None:
+            optimizer = optim.Adam([self.new_W, self.new_bias], learning_rate, weight_decay=weight_decay)
+
         # hyperparameters
         max_epoch = 20
         batch_size = 50
@@ -274,9 +277,9 @@ class Snowball(nrekit.framework.Model):
                 x = torch.matmul(x, self.new_W) + self.new_bias # (batch_size, 1)
                 x = F.sigmoid(x)
                 iter_loss = self.__loss__(x, batch_label.float()).mean()
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 iter_loss.backward(retain_graph=True)
-                self.optimizer.step()
+                optimizer.step()
                 sys.stdout.write('[snowball finetune] epoch {0:4} iter {1:4} | loss: {2:2.6f}'.format(epoch, i, iter_loss) + '\r')
                 sys.stdout.flush()
 
@@ -352,10 +355,16 @@ class Snowball(nrekit.framework.Model):
         '''
 
         # hyperparameters
-        snowball_max_iter = 5
+        snowball_max_iter = 2
         sys.stdout.flush()
         candidate_num_class = 20
         candidate_num_ins_per_class = 100
+        
+        sort_num1 = 10
+        sort_num2 = 20
+        sort_threshold1 = 0.0
+        sort_threshold2 = 0.0
+        sort_ori_threshold = 0.9
 
         # get neg representations with sentence encoder
         support_neg_rep = self.sentence_encoder(support_neg)
@@ -400,16 +409,29 @@ class Snowball(nrekit.framework.Model):
                 self._dataset_stack_and_cuda(entpair_distant[entpair])
                 if len(entpair_support[entpair]['word']) == 0 or len(entpair_distant[entpair]['word']) == 0:
                     continue
-                # pick_or_not = self.siamese_model.forward_infer(entpair_support[entpair], entpair_distant[entpair], threshold=threshold_for_phase1)
-                pick_or_not = self.siamese_model.forward_infer_half(original_support_pos, entpair_distant[entpair], threshold=threshold_for_phase1)
+                pick_or_not = self.siamese_model.forward_infer_sort(entpair_support[entpair], entpair_distant[entpair], threshold=threshold_for_phase1)
+                # pick_or_not = self.siamese_model.forward_infer_sort(original_support_pos, entpair_distant[entpair], threshold=threshold_for_phase1)
                 # pick_or_not = self._infer(entpair_distant[entpair]) > threshold
       
+                # -- method A: use threshold --
+                '''
                 for i in range(pick_or_not.size(0)):
                     if pick_or_not[i]:
                         self._add_ins_to_vdata(support_pos, entpair_distant[entpair], i, label=1)
                         exist_id[entpair_distant[entpair]['id'][i]] = 1
                 self._phase1_add_num += pick_or_not.sum()
                 self._phase1_total += pick_or_not.size(0)
+                '''
+                
+                # -- method B: use sort --
+                for i in range(min(len(pick_or_not), sort_num1)):
+                    if pick_or_not[i][0] > sort_threshold1:
+                        iid = pick_or_not[i][1]
+                        self._add_ins_to_vdata(support_pos, entpair_distant[entpair], iid, label=1)
+                        exist_id[entpair_distant[entpair]['id'][iid]] = 1
+                        self._phase1_add_num += 1
+                self._phase1_total += entpair_distant[entpair]['word'].size(0)
+
             
             ## build new support set
             support_pos_rep = self.sentence_encoder(support_pos)
@@ -417,8 +439,10 @@ class Snowball(nrekit.framework.Model):
             support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
             
             ## finetune
+            # self._train_finetune_init()
             self._train_finetune(support_rep, support_label)
             self._forward_eval_binary(query, threshold)
+            self._metric.append(np.array([self._f1, self._prec, self._recall]))
             print('\nphase1 add {} ins / {}'.format(self._phase1_add_num, self._phase1_total))
 
             # phase 2: use the new classifier to pick more extended support ins
@@ -428,8 +452,10 @@ class Snowball(nrekit.framework.Model):
             ## -- method 1: directly use the classifier --
             candidate_prob = self._infer(candidate)
             ## -- method 2: use siamese network --
-            pick_or_not = self.siamese_model.forward_infer_half(support_pos, candidate, threshold=threshold_for_phase2)
+            pick_or_not = self.siamese_model.forward_infer_sort(support_pos, candidate, threshold=threshold_for_phase2)
 
+            ## -- method A: use threshold --
+            '''
             self._phase2_total = candidate_prob.size(0)
             for i in range(candidate_prob.size(0)):
                 # if (candidate_prob[i] > threshold_for_phase2) and not (candidate['id'][i] in exist_id):
@@ -437,6 +463,16 @@ class Snowball(nrekit.framework.Model):
                     exist_id[candidate['id'][i]] = 1 
                     self._phase2_add_num += 1
                     self._add_ins_to_vdata(support_pos, candidate, i, label=1)
+            '''
+
+            ## -- method B: use sort --
+            self._phase2_total = candidate['word'].size(0)
+            for i in range(min(len(candidate_prob), sort_num2)):
+                iid = pick_or_not[i][1]
+                if (pick_or_not[i][0] > sort_threshold2) and (candidate_prob[iid] > sort_ori_threshold) and not (candidate['id'][iid] in exist_id):
+                    exist_id[candidate['id'][iid]] = 1 
+                    self._phase2_add_num += 1
+                    self._add_ins_to_vdata(support_pos, candidate, iid, label=1)
 
             ## build new support set
             support_pos_rep = self.sentence_encoder(support_pos)
@@ -444,6 +480,7 @@ class Snowball(nrekit.framework.Model):
             support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
 
             ## finetune
+            # self._train_finetune_init()
             self._train_finetune(support_rep, support_label)
             self._forward_eval_binary(query, threshold)
             self._metric.append(np.array([self._f1, self._prec, self._recall]))
@@ -493,3 +530,15 @@ class Snowball(nrekit.framework.Model):
         self.pos_class = pos_class 
 
         self._forward_train(support_pos, support_neg, query, distant, threshold=threshold, threshold_for_phase1=threshold_for_snowball, threshold_for_phase2=threshold_for_snowball)
+
+    def init_10shot(self, Ws, bs):
+        self.Ws = torch.stack(Ws, 0).transpose(0, 1) # (230, 16)
+        self.bs = torch.stack(bs, 0).transpose(0, 1) # (1, 16)
+
+    def eval_10shot(self, query):
+        x = self.sentence_encoder(query)
+        x = torch.matmul(x, self.Ws) + self.new_bias # (batch_size, 16)
+        x = F.sigmoid(x)
+        _, pred = x.max(-1) # (batch_size)
+        return self.__accuracy__(pred, query['label'])
+
