@@ -31,7 +31,7 @@ class Siamese(nn.Module):
         x = x.unsqueeze(1)
         y = y.unsqueeze(0)
         dis = torch.pow(x - y, 2).view(-1, self.hidden_size)
-        score = F.sigmoid(self.fc(dis).squeeze())
+        score = torch.sigmoid(self.fc(dis).squeeze())
         label = torch.zeros((positive_support_size, unlabelled_size)).long().cuda()
         label[:, :50] = 1
         label = label.view(-1)
@@ -55,7 +55,7 @@ class Siamese(nn.Module):
         z1 = torch.cat([x1, y1], 0)
         z2 = torch.cat([x2, y2], 0)
         dis = torch.pow(z1 - z2, 2)
-        score = F.sigmoid(self.fc(dis).squeeze())
+        score = torch.sigmoid(self.fc(dis).squeeze())
         self._loss = self.cost(score, label.float()).mean()
         pred = torch.zeros((score.size(0))).long().cuda()
         pred[score > threshold] = 1
@@ -72,7 +72,7 @@ class Siamese(nn.Module):
         x = x.unsqueeze(1)
         y = y.unsqueeze(0)
         dis = torch.pow(x - y, 2).view(-1, self.hidden_size)
-        score = F.sigmoid(self.fc(dis).squeeze(-1))
+        score = torch.sigmoid(self.fc(dis).squeeze(-1))
         pred = torch.zeros((score.size(0))).long().cuda()
         pred[score > threshold] = 1
         pred = pred.view(support_size, -1).sum(0)
@@ -80,14 +80,14 @@ class Siamese(nn.Module):
         pred[pred > 0] = 1
         return pred
 
-    def forward_infer_sort(self, x, y, threshold=0.5):
+    def forward_infer_sort(self, x, y):
         x = self.sentence_encoder(x)
         support_size = x.size(0)
         y = self.sentence_encoder(y)
         x = x.unsqueeze(1)
         y = y.unsqueeze(0)
         dis = torch.pow(x - y, 2)
-        score = F.sigmoid(self.fc(dis).squeeze(-1)).mean(0)
+        score = torch.sigmoid(self.fc(dis).squeeze(-1)).mean(0)
         pred = []
         for i in range(score.size(0)):
             pred.append((score[i], i))
@@ -101,7 +101,7 @@ class Siamese(nn.Module):
         x = x.unsqueeze(1)
         y = y.unsqueeze(0)
         dis = torch.pow(x - y, 2).view(-1, self.hidden_size)
-        score = F.sigmoid(self.fc(dis).squeeze(-1))
+        score = torch.sigmoid(self.fc(dis).squeeze(-1))
         pred = torch.zeros((score.size(0))).long().cuda()
         pred[score > threshold] = 1
         pred = pred.view(support_size, -1).sum(0)
@@ -115,88 +115,40 @@ class Snowball(nrekit.framework.Model):
         nrekit.framework.Model.__init__(self, sentence_encoder)
         self.hidden_size = hidden_size
         self.base_class = base_class
-        self.fc = nn.Linear(hidden_size, base_class)
+        self.fc = nn.Linear(hidden_size, base_class, bias=False)
         self.drop = nn.Dropout()
         self.siamese_model = siamese_model
         self.cost = nn.BCELoss(reduction='none')
+        
+        # snowball hyperparameter
+        self.parser.add_argument("--phase1_add_num", help="number of instances added in phase 1", type=int, default=10)
+        self.parser.add_argument("--phase2_add_num", help="number of instances added in phase 2", type=int, default=10)
+        self.parser.add_argument("--phase1_siamese_th", help="threshold of relation siamese network in phase 1", type=float, default=0)
+        self.parser.add_argument("--phase2_siamese_th", help="threshold of relation siamese network in phase 2", type=float, default=0)
+        self.parser.add_argument("--phase2_cl_th", help="threshold of relation classifier in phase 2", type=float, default=0.9)
+
+        # fine-tune hyperparameter
+        self.parser.add_argument("--finetune_epoch", help="num of epochs when finetune", type=float, default=20)
+        self.parser.add_argument("--finetune_batch_size", help="batch size when finetune", type=float, default=50)
+        self.parser.add_argument("--finetune_lr", help="learning rate when finetune", type=float, default=0.1)
+        self.parser.add_argument("--finetune_wd", help="weight decay rate when finetune", type=float, default=1e-5)
+
+        self.args = self.parser.parse_args()
 
     def forward_base(self, data):
         batch_size = data['word'].size(0)
         x = self.sentence_encoder(data) # (batch_size, hidden_size)
         x = self.drop(x)
         x = self.fc(x) # (batch_size, base_class)
-        x = F.sigmoid(x)
+        x = torch.sigmoid(x)
         label = torch.zeros((batch_size, self.base_class)).cuda()
         label.scatter_(1, data['label'].view(-1, 1), 1) # (batch_size, base_class)
         loss_array = self.__loss__(x, label)
         self._loss = ((label.view(-1) + 1.0 / self.base_class) * loss_array).mean() * self.base_class
         _, pred = x.max(-1)
         self._accuracy = self.__accuracy__(pred, data['label'])
-
-    def forward_new(self, data, positive_support_size, threshold=0.5):
-        support, query, unlabelled = data
-        new_W = Variable(self.fc.weight.mean(0) / 1e3, requires_grad=True)
-        new_bias = Variable(torch.zeros((1)), requires_grad=True)
-        optimizer = optim.Adam([new_W, new_bias], 1e-1, weight_decay=0)
-        new_W = new_W.cuda()
-        new_bias = new_bias.cuda()
-
-        # Expand
-        support_x = self.sentence_encoder(support) # (batch_size, hidden_size)
-        unlabelled_x = self.sentence_encoder(unlabelled)
-        similarity = self.siamese_model.forward_infer(support, unlabelled, support_size=positive_support_size, threshold=0.95)
-        chosen = []
-        correct_snowball = 0
-        assert(similarity.size(0) == 50 * 5)
-        for i in range(similarity.size(0)):
-            if similarity[i] == 1:
-                chosen.append(unlabelled_x[i])
-                if i <= 50:
-                    correct_snowball += 1
-        self._correct_snowball = correct_snowball
-        self._snowball = similarity.sum()
-        if similarity.sum() > 0:
-            chosen = torch.stack(chosen, 0)
-            chosen = torch.cat([support_x, chosen], 0)
-            label = torch.cat([support['label'], torch.ones((chosen.size(0) - support['label'].size(0))).long().cuda()], 0)
-        else:
-            chosen = support_x
-            label = support['label']
-
-        '''
-        for i in range(10):
-            x = torch.matmul(support_x, new_W) + new_bias # (batch_size, 1)
-            x = F.sigmoid(x)
-            iter_loss_array = self.__loss__(x, support['label'].float())
-            iter_loss = iter_loss_array.mean()
-            iter_loss.backward(retain_graph=True)
-            optimizer.step()
-        '''
-
-        for i in range(10):
-            x = torch.matmul(chosen, new_W) + new_bias # (batch_size, 1)
-            x = F.sigmoid(x)
-            iter_loss_array = self.__loss__(x, label.float())
-            iter_loss = iter_loss_array.mean()
-            optimizer.zero_grad()
-            iter_loss.backward(retain_graph=True)
-            optimizer.step()
-        
-        # Test
-        query_x = self.sentence_encoder(query) # (batch_size, hidden_size)
-        query_x = self.drop(query_x)
-        x = torch.matmul(query_x, new_W) + new_bias # (batch_size, 1)
-        x = F.sigmoid(x)
-        loss_array = self.__loss__(x, query['label'].float())
-        self._loss = loss_array.mean()
-        pred = torch.zeros((x.size(0))).long().cuda()
-        pred[x > threshold] = 1
-        self._accuracy = self.__accuracy__(pred, query['label'])
-        pred = pred.view(-1).data.cpu().numpy()
-        label = query['label'].view(-1).data.cpu().numpy()
-        self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
-        self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
-
+        self._pred = pred
+    
     def forward_baseline(self, support_pos, support_neg, query, threshold=0.5):
         '''
         baseline model
@@ -241,7 +193,7 @@ class Snowball(nrekit.framework.Model):
         # init variables and optimizer
         self.new_W = Variable(self.fc.weight.mean(0) / 1e3, requires_grad=True)
         self.new_bias = Variable(torch.zeros((1)), requires_grad=True)
-        self.optimizer = optim.Adam([self.new_W, self.new_bias], 1e-1, weight_decay=1e-5)
+        self.optimizer = optim.Adam([self.new_W, self.new_bias], self.args.finetune_lr, weight_decay=self.args.finetune_wd)
         self.new_W = self.new_W.cuda()
         self.new_bias = self.new_bias.cuda()
 
@@ -257,8 +209,8 @@ class Snowball(nrekit.framework.Model):
             optimizer = optim.Adam([self.new_W, self.new_bias], learning_rate, weight_decay=weight_decay)
 
         # hyperparameters
-        max_epoch = 20
-        batch_size = 50
+        max_epoch = self.args.finetune_epoch
+        batch_size = self.args.finetune_batch_size
 
         # dropout
         data_repre = self.drop(data_repre) 
@@ -275,7 +227,7 @@ class Snowball(nrekit.framework.Model):
                 x = data_repre[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
                 batch_label = label[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
                 x = torch.matmul(x, self.new_W) + self.new_bias # (batch_size, 1)
-                x = F.sigmoid(x)
+                x = torch.sigmoid(x)
                 iter_loss = self.__loss__(x, batch_label.float()).mean()
                 optimizer.zero_grad()
                 iter_loss.backward(retain_graph=True)
@@ -339,10 +291,10 @@ class Snowball(nrekit.framework.Model):
         '''
         x = self.sentence_encoder(dataset)
         x = torch.matmul(x, self.new_W) + self.new_bias # (batch_size, 1)
-        x = F.sigmoid(x)
+        x = torch.sigmoid(x)
         return x.view(-1)
 
-    def _forward_train(self, support_pos, support_neg, query, distant, threshold=0.5, threshold_for_phase1=0.8, threshold_for_phase2=0.9):
+    def _forward_train(self, support_pos, support_neg, query, distant, threshold=0.5):
         '''
         snowball process (train)
         support_pos: support set (positive, raw data)
@@ -360,11 +312,11 @@ class Snowball(nrekit.framework.Model):
         candidate_num_class = 20
         candidate_num_ins_per_class = 100
         
-        sort_num1 = 10
-        sort_num2 = 20
-        sort_threshold1 = 0.0
-        sort_threshold2 = 0.0
-        sort_ori_threshold = 0.9
+        sort_num1 = self.args.phase1_add_num
+        sort_num2 = self.args.phase2_add_num
+        sort_threshold1 = self.args.phase1_siamese_th
+        sort_threshold2 = self.args.phase2_siamese_th
+        sort_ori_threshold = self.args.phase2_cl_th
 
         # get neg representations with sentence encoder
         support_neg_rep = self.sentence_encoder(support_neg)
@@ -409,7 +361,7 @@ class Snowball(nrekit.framework.Model):
                 self._dataset_stack_and_cuda(entpair_distant[entpair])
                 if len(entpair_support[entpair]['word']) == 0 or len(entpair_distant[entpair]['word']) == 0:
                     continue
-                pick_or_not = self.siamese_model.forward_infer_sort(entpair_support[entpair], entpair_distant[entpair], threshold=threshold_for_phase1)
+                pick_or_not = self.siamese_model.forward_infer_sort(entpair_support[entpair], entpair_distant[entpair])
                 # pick_or_not = self.siamese_model.forward_infer_sort(original_support_pos, entpair_distant[entpair], threshold=threshold_for_phase1)
                 # pick_or_not = self._infer(entpair_distant[entpair]) > threshold
       
@@ -432,7 +384,6 @@ class Snowball(nrekit.framework.Model):
                         self._phase1_add_num += 1
                 self._phase1_total += entpair_distant[entpair]['word'].size(0)
 
-            
             ## build new support set
             support_pos_rep = self.sentence_encoder(support_pos)
             support_rep = torch.cat([support_pos_rep, support_neg_rep], 0)
@@ -452,7 +403,7 @@ class Snowball(nrekit.framework.Model):
             ## -- method 1: directly use the classifier --
             candidate_prob = self._infer(candidate)
             ## -- method 2: use siamese network --
-            pick_or_not = self.siamese_model.forward_infer_sort(support_pos, candidate, threshold=threshold_for_phase2)
+            pick_or_not = self.siamese_model.forward_infer_sort(support_pos, candidate)
 
             ## -- method A: use threshold --
             '''
@@ -480,7 +431,6 @@ class Snowball(nrekit.framework.Model):
             support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
 
             ## finetune
-            # self._train_finetune_init()
             self._train_finetune(support_rep, support_label)
             self._forward_eval_binary(query, threshold)
             self._metric.append(np.array([self._f1, self._prec, self._recall]))
@@ -529,7 +479,7 @@ class Snowball(nrekit.framework.Model):
         '''
         self.pos_class = pos_class 
 
-        self._forward_train(support_pos, support_neg, query, distant, threshold=threshold, threshold_for_phase1=threshold_for_snowball, threshold_for_phase2=threshold_for_snowball)
+        self._forward_train(support_pos, support_neg, query, distant, threshold=threshold)
 
     def init_10shot(self, Ws, bs):
         self.Ws = torch.stack(Ws, 0).transpose(0, 1) # (230, 16)
@@ -538,7 +488,7 @@ class Snowball(nrekit.framework.Model):
     def eval_10shot(self, query):
         x = self.sentence_encoder(query)
         x = torch.matmul(x, self.Ws) + self.new_bias # (batch_size, 16)
-        x = F.sigmoid(x)
+        x = torch.sigmoid(x)
         _, pred = x.max(-1) # (batch_size)
         return self.__accuracy__(pred, query['label'])
 

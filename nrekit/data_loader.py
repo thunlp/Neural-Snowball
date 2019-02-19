@@ -70,7 +70,7 @@ class JSONFileDataLoader(FileDataLoader):
         print("Finish loading")
         return True
 
-    def __init__(self, file_name, word_vec_file_name, max_length=40, case_sensitive=False, reprocess=False, cuda=True, distant=False):
+    def __init__(self, file_name, word_vec_file_name, max_length=40, case_sensitive=False, reprocess=False, cuda=True, distant=False, rel2id=None, shuffle=True):
         '''
         file_name: Json file storing the data in the following format
             {
@@ -105,6 +105,7 @@ class JSONFileDataLoader(FileDataLoader):
         self.case_sensitive = case_sensitive
         self.max_length = max_length
         self.cuda = cuda
+        self.shuffle = shuffle
 
         if reprocess or not self._load_preprocessed_file(): # Try to load pre-processed files:
             # Check files
@@ -165,13 +166,18 @@ class JSONFileDataLoader(FileDataLoader):
             self.data_entpair =[]
             self.rel2scope = {} # left close right open
             self.entpair2scope = {}
-            self.rel2id = {}
-            self.rel_tot = 0
+            if rel2id is not None:
+                self.rel2id = rel2id
+                self.rel_tot = len(self.rel2id)
+            else:
+                self.rel2id = {}
+                self.rel_tot = 0
             i = 0
             for relation in self.ori_data:
                 self.rel2scope[relation] = [i, i]
-                self.rel2id[relation] = self.rel_tot
-                self.rel_tot += 1
+                if relation not in self.rel2id:
+                    self.rel2id[relation] = self.rel_tot
+                    self.rel_tot += 1
                 for ins in self.ori_data[relation]:
                     if distant:
                         head = ins['h']['name']
@@ -251,14 +257,38 @@ class JSONFileDataLoader(FileDataLoader):
         for rel in self.rel2id:
             self.id2rel[self.rel2id[rel]] = rel
         self.index = list(range(self.instance_tot))
-        random.shuffle(self.index)
+        if self.shuffle:
+            random.shuffle(self.index)
         self.current = 0
+
+    def next_batch_one_epoch(self, batch_size):
+        if self.current >= len(self.index):
+            return None
+        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+        if self.current + batch_size > len(self.index):
+            batch_size = len(self.index) - self.current
+        current_index = self.index[self.current:self.current+batch_size]
+        self.current += batch_size
+
+        batch['word'] = Variable(torch.from_numpy(self.data_word[current_index]).long()) 
+        batch['pos1'] = Variable(torch.from_numpy(self.data_pos1[current_index]).long())
+        batch['pos2'] = Variable(torch.from_numpy(self.data_pos2[current_index]).long())
+        batch['mask'] = Variable(torch.from_numpy(self.data_mask[current_index]).long())
+        batch['label']= Variable(torch.from_numpy(self.data_label[current_index]).long())
+
+        # To cuda
+        if self.cuda:
+            for key in batch:
+                batch[key] = batch[key].cuda()
+
+        return batch
 
     def next_batch(self, batch_size):
         batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
         if self.current + batch_size > len(self.index):
             self.index = list(range(self.instance_tot))
-            random.shuffle(self.index)
+            if self.shuffle:
+                random.shuffle(self.index)
             self.current = 0
         current_index = self.index[self.current:self.current+batch_size]
         self.current += batch_size

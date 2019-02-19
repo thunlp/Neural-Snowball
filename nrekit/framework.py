@@ -1,5 +1,6 @@
 import os
 import sklearn.metrics
+from sklearn.preprocessing import label_binarize
 import numpy as np
 import sys
 import time
@@ -9,6 +10,7 @@ import torch
 from torch import autograd, optim, nn
 from torch.autograd import Variable
 from torch.nn import functional as F
+import argparse
 
 class Model(nn.Module):
     def __init__(self, sentence_encoder):
@@ -22,6 +24,8 @@ class Model(nn.Module):
         self.cost = nn.BCELoss(size_average=True)
         self._loss = 0
         self._accuracy = 0
+        self.parser = argparse.ArgumentParser()
+        self.NA_label = None
     
     def forward_base(self, data):
         raise NotImplementedError
@@ -38,7 +42,12 @@ class Model(nn.Module):
         label: Label with whatever size
         return: [Accuracy] (A single value)
         '''
-        return torch.mean((pred.view(-1) == label.view(-1)).type(torch.FloatTensor))
+        if self.NA_label is not None:
+            pred = pred.view(-1).cpu().detach().numpy()
+            label = label.view(-1).cpu().detach().numpy()
+            return float(np.logical_and(label != self.NA_label, label == pred).sum()) / float((label != self.NA_label).sum() + 1)
+        else:
+            return torch.mean((pred.view(-1) == label.view(-1)).type(torch.FloatTensor)).item()
     
     def loss(self):
         return self._loss
@@ -71,9 +80,6 @@ class Framework:
         else:
             raise Exception("No checkpoint found at '%s'" % ckpt)
     
-    def item(self, x):
-        return x.item()
-
     def eval_siamese(self,
             model,
             s_num_size=10, s_num_class=10,
@@ -180,8 +186,8 @@ class Framework:
             loss.backward()
             opt.step()
             
-            iter_loss += self.item(loss.data)
-            iter_right += self.item(right.data)
+            iter_loss += loss
+            iter_right += right
             iter_sample += 1
 
             if (model2 is not None):
@@ -196,8 +202,8 @@ class Framework:
                 loss2.backward()
                 opt2.step()
 
-                iter_loss2 += self.item(loss2.data)
-                iter_right2 += self.item(right2.data)
+                iter_loss2 += loss2
+                iter_right2 += right2
                 iter_sample2 += 1
                 sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}% | loss2: {3:2.6f}, accuracy2: {4:3.2f}%, prec: {5:3.2f}%, recall: {6:3.2f}%'.format( \
                     it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample, \
@@ -324,8 +330,7 @@ class Framework:
             eval_iter=2000,
             ckpt=None,
             is_model2=False,
-            threshold=0.5,
-            threshold_for_snowball=0.5):
+            threshold=0.5):
         '''
         model: a FewShotREModel instance
         B: Batch size
@@ -357,7 +362,7 @@ class Framework:
         for it in range(eval_iter):
             support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=False)
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
-            model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold, threshold_for_snowball=threshold_for_snowball)
+            model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold)
 
             iter_bright += model._baseline_f1
             iter_bprec += model._baseline_prec
@@ -378,7 +383,7 @@ class Framework:
                 print("iter {} : {}".format(i, snowball_metric[i] / iter_sample))
         return iter_right / iter_sample
 
-class PretrainFramework:
+class SuperviseFramework:
 
     def __init__(self, train_data_loader, val_data_loader):
         '''
@@ -400,9 +405,6 @@ class PretrainFramework:
         else:
             raise Exception("No checkpoint found at '%s'" % ckpt)
     
-    def item(self, x):
-        return x.item()
-
     def train_encoder(self,
               model,
               model_name,
@@ -465,20 +467,7 @@ class PretrainFramework:
         for it in range(start_iter, start_iter + train_iter):
             scheduler.step()
             batch_data = self.train_data_loader.next_batch(batch_size)
-            '''
-            batch_data = self.train_data_loader.next_support(batch_size // 5)
-            batch_data['word'] = batch_data['word'].view(-1, self.train_data_loader.max_length)
-            batch_data['word'] = batch_data['word'].view(-1, self.train_data_loader.max_length)
-            batch_data['word'] = batch_data['word'].view(-1, self.train_data_loader.max_length)
-            batch_data['word'] = batch_data['word'].view(-1, self.train_data_loader.max_length)
-            batch_data['label'] = [0] * (batch_size // 5)
-            batch_data['label'] += [1] * (batch_size // 5)
-            batch_data['label'] += [2] * (batch_size // 5)
-            batch_data['label'] += [3] * (batch_size // 5)
-            batch_data['label'] += [4] * (batch_size // 5)
-            batch_data['label'] = Variable(torch.from_numpy(np.array(batch_data['label'])).long()).cuda() 
-            '''
-
+      
             if support:
                 support_data = self.train_data_loader.next_support(support_size)
                 model.forward_base(batch_data, support_data)
@@ -490,8 +479,8 @@ class PretrainFramework:
             loss.backward()
             opt.step()
             
-            iter_loss += self.item(loss.data)
-            iter_right += self.item(right.data)
+            iter_loss += loss
+            iter_right += right
             iter_sample += 1
 
             sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%'.format(it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample) +'\r')
@@ -517,10 +506,65 @@ class PretrainFramework:
         print("\n####################\n")
         print("Finish training " + model_name)
 
+    def eval_encoder_one_epoch(self,
+            model,
+            batch_size=200,
+            support_size=10,
+            support=False):
+        '''
+        model: a FewShotREModel instance
+        eval_iter: num of iterations of evaluation
+        return: Accuracy
+        '''
+
+        model.eval()
+        iter_right = 0.0
+        iter_sample = 0.0
+        it = 0
+        pred = []
+        label = []
+        while True:
+            it += 1
+            batch_data = self.val_data_loader.next_batch_one_epoch(batch_size)
+            if batch_data is None:
+                break
+            if support:
+                support_data = self.val_data_loader.next_support(support_size)
+                model.forward_base(batch_data, support_data)
+            else:
+                model.forward_base(batch_data)
+            right = model.accuracy()
+
+            iter_right += right
+            iter_sample += 1
+
+            sys.stdout.write('[EVAL] step: {0:4} | acc: {1:3.2f}%'.format(it + 1, 100 * iter_right / iter_sample) + '\r')
+            sys.stdout.flush()
+
+            pred.append(model._pred.cpu().detach().numpy())
+            label.append(batch_data['label'].cpu().detach().numpy())
+            
+        model.train()
+
+        pred = np.concatenate(pred)
+        label = np.concatenate(label)
+        np.save('tacred_test_pred.npy', pred)
+        pred = label_binarize(pred, classes=list(range(0, 13)) + list(range(14, self.val_data_loader.rel_tot)))
+        label = label_binarize(label, classes=list(range(0, 13)) + list(range(14, self.val_data_loader.rel_tot)))
+
+        micro_precision = sklearn.metrics.average_precision_score(pred, label, average='micro')
+        micro_recall = sklearn.metrics.recall_score(pred, label, average='micro')
+        micro_f1 = 2 * micro_precision * micro_recall / (micro_precision + micro_recall)
+        print('')
+        print('micro precision: {}, micro recall: {}, micro f1: {}'.format(micro_precision, micro_recall, micro_f1))
+        print('')
+
+        return iter_right / iter_sample
+
     def eval_encoder(self,
             model,
             eval_iter=2000,
-            batch_size=500,
+            batch_size=200,
             support_size=10,
             support=False):
         '''
@@ -541,7 +585,7 @@ class PretrainFramework:
                 model.forward_base(batch_data)
             right = model.accuracy()
 
-            iter_right += self.item(right.data)
+            iter_right += right
             iter_sample += 1
 
             sys.stdout.write('[EVAL] step: {0:4} | acc: {1:3.2f}%'.format(it + 1, 100 * iter_right / iter_sample) + '\r')
@@ -620,8 +664,8 @@ class PretrainFramework:
             loss.backward()
             opt.step()
 
-            iter_loss += self.item(loss.data)
-            iter_right += self.item(right.data)
+            iter_loss += loss
+            iter_right += right
             iter_sample += 1
             sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%'.format( \
                 it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample, 100.0 * model._prec, 100.0 * model._recall) +'\r')
