@@ -5,6 +5,8 @@ import math
 from torch import optim
 from . import network
 
+from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+
 class CNNSentenceEncoder(nn.Module):
 
     def __init__(self, word_vec_mat, max_length, word_embedding_dim=50, pos_embedding_dim=5, hidden_size=230):
@@ -35,13 +37,13 @@ class PCNNSentenceEncoder(nn.Module):
 
 class BERTSentenceEncoder(nn.Module):
 
-    def __init__(self): 
+    def __init__(self, pretrain_path): 
         nn.Module.__init__(self)
-        self.bert = BertModel.from_pretrained('bert-base-uncased')
+        self.bert = BertModel.from_pretrained(pretrain_path)
 
     def forward(self, inputs):
-        x, _ = self.bert(inpurts['word'])
-        print(x.size())
-        x = x[-1]
+        x, _ = self.bert(inputs['word'])
+        x = x[-1] # (batch_size, max_length, hidden_size)
+        x = x[:, 0, :] # (batch_size, hidden_size)
         return x
 
