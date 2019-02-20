@@ -22,7 +22,7 @@ class FileDataLoader:
 class JSONFileDataLoaderBERT(FileDataLoader):
     def _load_preprocessed_file(self):
         name_prefix = '.'.join(self.file_name.split('/')[-1].split('.')[:-1])
-        processed_data_dir = '_processed_data'
+        processed_data_dir = '_processed_data/bert'
         if not os.path.isdir(processed_data_dir):
             return False
         word_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_word.npy')
@@ -56,7 +56,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         print("Finish loading")
         return True
 
-    def __init__(self, file_name, max_length=40, case_sensitive=False, reprocess=False, cuda=True, distant=False, rel2id=None, shuffle=True):
+    def __init__(self, file_name, vocab, max_length=40, case_sensitive=False, reprocess=False, cuda=True, distant=False, rel2id=None, shuffle=True):
         '''
         file_name: Json file storing the data in the following format
             {
@@ -125,6 +125,9 @@ class JSONFileDataLoaderBERT(FileDataLoader):
                 self.rel2id = {}
                 self.rel_tot = 0
             i = 0
+
+            tokenizer = BertTokenizer.from_pretrained(vocab)
+
             for relation in self.ori_data:
                 self.rel2scope[relation] = [i, i]
                 if relation not in self.rel2id:
@@ -159,7 +162,6 @@ class JSONFileDataLoaderBERT(FileDataLoader):
                         new_words = ['[CLS]'] + words[:pos2] + ['@'] + words[pos2:pos2_end+1] + ['@'] + words[pos2_end+1:pos1] \
                                 + ['#'] + words[pos1:pos1_end+1] + ['#'] + words[pos1_end+1:]
                     sentence = ' '.join(new_words)
-                    print(sentence)
                     tmp = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sentence))
                     if len(tmp) < max_length:
                         tmp += [0] * (max_length - len(tmp))
@@ -185,6 +187,9 @@ class JSONFileDataLoaderBERT(FileDataLoader):
             processed_data_dir = '_processed_data'
             if not os.path.isdir(processed_data_dir):
                 os.mkdir(processed_data_dir)
+            processed_data_dir = '_processed_data/bert'
+            if not os.path.isdir(processed_data_dir):
+                os.mkdir(processed_data_dir)
             self.data_entpair = np.array(self.data_entpair)
             np.save(os.path.join(processed_data_dir, name_prefix + '_word.npy'), self.data_word)
             np.save(os.path.join(processed_data_dir, name_prefix + '_length.npy'), self.data_length)
@@ -205,6 +210,9 @@ class JSONFileDataLoaderBERT(FileDataLoader):
 
     def next_batch_one_epoch(self, batch_size):
         if self.current >= len(self.index):
+            if self.shuffle:
+                random.shuffle(self.index)
+            self.current = 0
             return None
         batch = {'word': []}
         if self.current + batch_size > len(self.index):

@@ -111,14 +111,14 @@ class Siamese(nn.Module):
     
 class Snowball(nrekit.framework.Model):
     
-    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230):
+    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230, drop_rate=0.5):
         nrekit.framework.Model.__init__(self, sentence_encoder)
         self.hidden_size = hidden_size
         self.base_class = base_class
-        self.fc = nn.Linear(hidden_size, base_class, bias=False)
-        self.drop = nn.Dropout()
+        self.fc = nn.Linear(hidden_size, base_class)
+        self.drop = nn.Dropout(drop_rate)
         self.siamese_model = siamese_model
-        self.cost = nn.BCELoss(reduction='none')
+        self.cost = nn.BCEWithLogitsLoss()
         
         # snowball hyperparameter
         self.parser.add_argument("--phase1_add_num", help="number of instances added in phase 1", type=int, default=10)
@@ -135,16 +135,24 @@ class Snowball(nrekit.framework.Model):
 
         self.args = self.parser.parse_args()
 
+    def __loss__(self, logits, label):
+        onehot_label = torch.zeros(logits.size()).cuda()
+        onehot_label.scatter_(1, label.view(-1, 1), 1)
+        return self.cost(logits, onehot_label)
+
     def forward_base(self, data):
         batch_size = data['word'].size(0)
         x = self.sentence_encoder(data) # (batch_size, hidden_size)
         x = self.drop(x)
         x = self.fc(x) # (batch_size, base_class)
-        x = torch.sigmoid(x)
-        label = torch.zeros((batch_size, self.base_class)).cuda()
-        label.scatter_(1, data['label'].view(-1, 1), 1) # (batch_size, base_class)
-        loss_array = self.__loss__(x, label)
-        self._loss = ((label.view(-1) + 1.0 / self.base_class) * loss_array).mean() * self.base_class
+
+        # x = torch.sigmoid(x)
+        # label = torch.zeros((batch_size, self.base_class)).cuda()
+        # label.scatter_(1, data['label'].view(-1, 1), 1) # (batch_size, base_class)
+        # loss_array = self.__loss__(x, label)
+        # self._loss = ((label.view(-1) + 1.0 / self.base_class) * loss_array).mean() * self.base_class
+
+        self._loss = self.__loss__(x, data['label'])
         _, pred = x.max(-1)
         self._accuracy = self.__accuracy__(pred, data['label'])
         self._pred = pred

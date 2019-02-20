@@ -408,17 +408,16 @@ class SuperviseFramework:
     def train_encoder_epoch(self,
               model,
               model_name,
+              optimizer,
               batch_size=200,
               ckpt_dir='./checkpoint',
               learning_rate=1.,
-              lr_step_size=30000,
               weight_decay=1e-5,
               train_epoch=30,
               cuda=True,
               pretrain_model=None,
               support=False,
-              support_size=10,
-              optimizer=optim.SGD):
+              support_size=10):
         '''
         model: a FewShotREModel instance
         model_name: Name of the model
@@ -439,11 +438,6 @@ class SuperviseFramework:
         print("Start training...")
         model.train()
         
-        # Init
-        parameters_to_optimize = filter(lambda x:x.requires_grad, model.parameters())
-        opt = optimizer(parameters_to_optimize, learning_rate, weight_decay=weight_decay)
-        scheduler = optim.lr_scheduler.StepLR(opt, step_size=lr_step_size)
-
         if pretrain_model:
             checkpoint = self.__load_model__(pretrain_model)
             model.load_state_dict(checkpoint['state_dict'])
@@ -457,16 +451,17 @@ class SuperviseFramework:
 
         # Training
         best_acc = 0
-        iter_loss = 0.0
-        iter_right = 0.0
-        iter_sample = 0.0
-
+        
         for epoch in range(train_epoch):
+            it = 0
+            iter_loss = 0.0
+            iter_right = 0.0
+            iter_sample = 0.0
             while True:
+                it += 1
                 batch_data = self.train_data_loader.next_batch_one_epoch(batch_size)
                 if batch_data is None:
                     break
-                scheduler.step()
       
                 if support:
                     support_data = self.train_data_loader.next_support(support_size)
@@ -475,9 +470,9 @@ class SuperviseFramework:
                     model.forward_base(batch_data)
                 loss = model.loss()
                 right = model.accuracy()
-                opt.zero_grad()
+                optimizer.zero_grad()
                 loss.backward()
-                opt.step()
+                optimizer.step()
                 
                 iter_loss += loss
                 iter_right += right
@@ -486,12 +481,8 @@ class SuperviseFramework:
                 sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%'.format(it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample) +'\r')
                 sys.stdout.flush()
 
-            iter_loss = 0.
-            iter_right = 0.
-            iter_sample = 0.
-
             print('')
-            acc = self.eval_encoder(model, eval_iter=val_iter, support=support)
+            acc = self.eval_encoder_one_epoch(model, support=support, batch_size=batch_size)
             print('')
             if acc > best_acc:
                 print('Best checkpoint')
@@ -593,7 +584,7 @@ class SuperviseFramework:
 
             if (it + 1) % val_step == 0:
                 print('')
-                acc = self.eval_encoder(model, eval_iter=val_iter, support=support)
+                acc = self.eval_encoder(model, support=support, eval_iter=val_iter)
                 print('')
                 if acc > best_acc:
                     print('Best checkpoint')
@@ -645,7 +636,6 @@ class SuperviseFramework:
             label.append(batch_data['label'].cpu().detach().numpy())
             
         model.train()
-
         pred = np.concatenate(pred)
         label = np.concatenate(label)
         np.save('tacred_test_pred.npy', pred)
