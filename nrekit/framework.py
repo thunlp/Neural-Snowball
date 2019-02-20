@@ -404,7 +404,107 @@ class SuperviseFramework:
             return checkpoint
         else:
             raise Exception("No checkpoint found at '%s'" % ckpt)
-    
+   
+    def train_encoder_epoch(self,
+              model,
+              model_name,
+              batch_size=200,
+              ckpt_dir='./checkpoint',
+              learning_rate=1.,
+              lr_step_size=30000,
+              weight_decay=1e-5,
+              train_epoch=30,
+              cuda=True,
+              pretrain_model=None,
+              support=False,
+              support_size=10,
+              optimizer=optim.SGD):
+        '''
+        model: a FewShotREModel instance
+        model_name: Name of the model
+        B: Batch size
+        N: Num of classes for each batch
+        K: Num of instances for each class in the support set
+        Q: Num of instances for each class in the query set
+        ckpt_dir: Directory of checkpoints
+        learning_rate: Initial learning rate
+        lr_step_size: Decay learning rate every lr_step_size steps
+        weight_decay: Rate of decaying weight
+        train_iter: Num of iterations of training
+        val_iter: Num of iterations of validating
+        val_step: Validate every val_step steps
+        cuda: Use CUDA or not
+        pretrain_model: Pre-trained checkpoint path
+        '''
+        print("Start training...")
+        model.train()
+        
+        # Init
+        parameters_to_optimize = filter(lambda x:x.requires_grad, model.parameters())
+        opt = optimizer(parameters_to_optimize, learning_rate, weight_decay=weight_decay)
+        scheduler = optim.lr_scheduler.StepLR(opt, step_size=lr_step_size)
+
+        if pretrain_model:
+            checkpoint = self.__load_model__(pretrain_model)
+            model.load_state_dict(checkpoint['state_dict'])
+            # start_iter = checkpoint['iter'] + 1
+            start_iter = 0
+        else:
+            start_iter = 0
+
+        if cuda:
+            model = model.cuda()
+
+        # Training
+        best_acc = 0
+        iter_loss = 0.0
+        iter_right = 0.0
+        iter_sample = 0.0
+
+        for epoch in range(train_epoch):
+            while True:
+                batch_data = self.train_data_loader.next_batch_one_epoch(batch_size)
+                if batch_data is None:
+                    break
+                scheduler.step()
+      
+                if support:
+                    support_data = self.train_data_loader.next_support(support_size)
+                    model.forward_base(batch_data, support_data)
+                else:
+                    model.forward_base(batch_data)
+                loss = model.loss()
+                right = model.accuracy()
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                
+                iter_loss += loss
+                iter_right += right
+                iter_sample += 1
+
+                sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%'.format(it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample) +'\r')
+                sys.stdout.flush()
+
+            iter_loss = 0.
+            iter_right = 0.
+            iter_sample = 0.
+
+            print('')
+            acc = self.eval_encoder(model, eval_iter=val_iter, support=support)
+            print('')
+            if acc > best_acc:
+                print('Best checkpoint')
+                if not os.path.exists(ckpt_dir):
+                    os.makedirs(ckpt_dir)
+                save_path = os.path.join(ckpt_dir, model_name + ".pth.tar")
+                torch.save({'state_dict': model.state_dict()}, save_path)
+                best_acc = acc
+                
+        print("\n####################\n")
+        print("Finish training " + model_name)
+
+
     def train_encoder(self,
               model,
               model_name,

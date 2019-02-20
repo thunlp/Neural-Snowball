@@ -33,3 +33,15 @@ class PCNNSentenceEncoder(nn.Module):
         x = self.encoder.pcnn(x, inputs['mask'])
         return x
 
+class BERTSentenceEncoder(nn.Module):
+
+    def __init__(self): 
+        nn.Module.__init__(self)
+        self.bert = BertModel.from_pretrained('bert-base-uncased')
+
+    def forward(self, inputs):
+        x, _ = self.bert(inpurts['word'])
+        print(x.size())
+        x = x[-1]
+        return x
+
