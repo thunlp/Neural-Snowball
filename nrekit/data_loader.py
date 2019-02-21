@@ -18,7 +18,8 @@ class FileDataLoader:
         raise NotImplementedError
 
 class JSONFileDataLoader(FileDataLoader):
-    def _load_preprocessed_file(self): name_prefix = '.'.join(self.file_name.split('/')[-1].split('.')[:-1])
+    def _load_preprocessed_file(self): 
+        name_prefix = '.'.join(self.file_name.split('/')[-1].split('.')[:-1])
         word_vec_name_prefix = '.'.join(self.word_vec_file_name.split('/')[-1].split('.')[:-1])
         processed_data_dir = '_processed_data'
         if not os.path.isdir(processed_data_dir):

@@ -12,12 +12,13 @@ val_data_loader = DataLoader('./data/train_val.json', vocab='./data/bert_vocab.t
 
 framework = nrekit.framework.SuperviseFramework(train_data_loader, val_data_loader)
 sentence_encoder = nrekit.sentence_encoder.BERTSentenceEncoder('./data/bert-base-uncased')
-model = models.snowball.Snowball(sentence_encoder, base_class=train_data_loader.rel_tot, siamese_model=None, hidden_size=768, drop_rate=0.1)
-model_name = 'bert_encoder_on_fewrel'
+model = models.snowball.Siamese(sentence_encoder, hidden_size=768, drop_rate=0.1)
+
+model_name = 'bert_siamese_on_fewrel'
 
 # set optimizer
 batch_size = 32
-train_epoch = 10
+train_iter = 30000
 
 param_optimizer = list(model.named_parameters())
 no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
@@ -27,4 +28,4 @@ optimizer_grouped_parameters = [
     ]
 optimizer = BertAdam(optimizer_grouped_parameters, lr=2e-5)
 
-framework.train_encoder_epoch(model, model_name, optimizer=optimizer, batch_size=batch_size, train_epoch=train_epoch, learning_rate=2e-5, warmup=True)
+framework.train_siamese(model, model_name, optimizer=optimizer, batch_size=batch_size, train_iter=30000, learning_rate=2e-5, warmup=True)

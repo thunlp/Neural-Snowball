@@ -42,8 +42,6 @@ class BERTSentenceEncoder(nn.Module):
         self.bert = BertModel.from_pretrained(pretrain_path)
 
     def forward(self, inputs):
-        x, _ = self.bert(inputs['word'])
-        x = x[-1] # (batch_size, max_length, hidden_size)
-        x = x[:, 0, :] # (batch_size, hidden_size)
+        _, x = self.bert(inputs['word'], attention_mask=inputs['mask'])
         return x
 

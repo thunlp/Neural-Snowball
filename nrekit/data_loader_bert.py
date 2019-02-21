@@ -26,6 +26,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         if not os.path.isdir(processed_data_dir):
             return False
         word_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_word.npy')
+        mask_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_mask.npy')
         length_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_length.npy')
         label_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_label.npy')
         entpair_npy_file_name = os.path.join(processed_data_dir, name_prefix + '_entpair.npy')
@@ -33,6 +34,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         rel2id_file_name = os.path.join(processed_data_dir, name_prefix + '_rel2id.json')
         entpair2scope_file_name = os.path.join(processed_data_dir, name_prefix + '_entpair2scope.json')
         if not os.path.exists(word_npy_file_name) or \
+           not os.path.exists(mask_npy_file_name) or \
            not os.path.exists(length_npy_file_name) or \
            not os.path.exists(label_npy_file_name) or \
            not os.path.exists(entpair_npy_file_name) or \
@@ -42,6 +44,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
             return False
         print("Pre-processed files exist. Loading them...")
         self.data_word = np.load(word_npy_file_name)
+        self.data_mask = np.load(mask_npy_file_name)
         self.data_length = np.load(length_npy_file_name)
         self.data_label = np.load(label_npy_file_name)
         self.data_entpair = np.load(entpair_npy_file_name)
@@ -113,6 +116,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
             for relation in self.ori_data:
                 self.instance_tot += len(self.ori_data[relation])
             self.data_word = np.zeros((self.instance_tot, self.max_length), dtype=np.int32)
+            self.data_mask = np.zeros((self.instance_tot, self.max_length), dtype=np.int32)
             self.data_length = np.zeros((self.instance_tot), dtype=np.int32)
             self.data_label = np.zeros((self.instance_tot), dtype=np.int32)
             self.data_entpair =[]
@@ -149,7 +153,6 @@ class JSONFileDataLoaderBERT(FileDataLoader):
                         pos1_end = ins['h'][2][0][-1]
                         pos2_end = ins['t'][2][0][-1]
                     words = ins['tokens']
-                    cur_ref_data_word = self.data_word[i]         
                     entpair = head + '#' + tail
                     self.data_entpair.append(entpair)
 
@@ -163,13 +166,15 @@ class JSONFileDataLoaderBERT(FileDataLoader):
                                 + ['#'] + words[pos1:pos1_end+1] + ['#'] + words[pos1_end+1:]
                     sentence = ' '.join(new_words)
                     tmp = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sentence))
+                    self.data_length[i] = min(len(tmp), max_length)
                     if len(tmp) < max_length:
+                        self.data_mask[i][:len(tmp)] = 1
                         tmp += [0] * (max_length - len(tmp))
                     else:
                         tmp = tmp[:max_length]
-                    cur_ref_data_word = np.array(tmp)
+                        self.data_mask[i][:] = 1
+                    self.data_word[i][:] = np.array(tmp)
                     
-                    self.data_length[i] = len(words)
                     self.data_label[i] = self.rel2id[relation]
                     if len(words) > max_length:
                         self.data_length[i] = max_length
@@ -192,6 +197,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
                 os.mkdir(processed_data_dir)
             self.data_entpair = np.array(self.data_entpair)
             np.save(os.path.join(processed_data_dir, name_prefix + '_word.npy'), self.data_word)
+            np.save(os.path.join(processed_data_dir, name_prefix + '_mask.npy'), self.data_mask)
             np.save(os.path.join(processed_data_dir, name_prefix + '_length.npy'), self.data_length)
             np.save(os.path.join(processed_data_dir, name_prefix + '_label.npy'), self.data_label)
             np.save(os.path.join(processed_data_dir, name_prefix + '_entpair.npy'), self.data_entpair)
@@ -214,13 +220,14 @@ class JSONFileDataLoaderBERT(FileDataLoader):
                 random.shuffle(self.index)
             self.current = 0
             return None
-        batch = {'word': []}
+        batch = {'word': [], 'mask': []}
         if self.current + batch_size > len(self.index):
             batch_size = len(self.index) - self.current
         current_index = self.index[self.current:self.current+batch_size]
         self.current += batch_size
 
         batch['word'] = Variable(torch.from_numpy(self.data_word[current_index]).long()) 
+        batch['mask'] = Variable(torch.from_numpy(self.data_mask[current_index]).long()) 
         batch['label']= Variable(torch.from_numpy(self.data_label[current_index]).long())
 
         # To cuda
@@ -231,7 +238,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         return batch
 
     def next_batch(self, batch_size):
-        batch = {'word': []}
+        batch = {'word': [], 'mask': []}
         if self.current + batch_size > len(self.index):
             self.index = list(range(self.instance_tot))
             if self.shuffle:
@@ -241,6 +248,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         self.current += batch_size
 
         batch['word'] = Variable(torch.from_numpy(self.data_word[current_index]).long()) 
+        batch['mask'] = Variable(torch.from_numpy(self.data_mask[current_index]).long()) 
         batch['label']= Variable(torch.from_numpy(self.data_label[current_index]).long())
 
         # To cuda
@@ -251,15 +259,19 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         return batch
 
     def next_support(self, support_size):
-        support = {'word': []}
+        support = {'word': [], 'mask': []}
         for i in range(self.rel_tot):
             scope = self.rel2scope[self.id2rel[i]]
             indices = np.random.choice(list(range(scope[0], scope[1])), support_size, False)
             support['word'].append(self.data_word[indices])
+            support['mask'].append(self.data_mask[indices])
 
         support['word'] = np.concatenate(support['word'], 0)
+        support['mask'] = np.concatenate(support['mask'], 0)
 
         support['word'] = Variable(torch.from_numpy(support['word']).long()) 
+        support['mask'] = Variable(torch.from_numpy(support['mask']).long()) 
+
 
         # To cuda
         if self.cuda:
@@ -275,16 +287,19 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         num_class: The num of classes (include the positive class).
         '''
         target_classes = random.sample(self.rel2scope.keys(), num_class)
-        batch = {'word': []}
+        batch = {'word': [], 'mask': []}
 
         for i, class_name in enumerate(target_classes):
             scope = self.rel2scope[class_name]
             indices = np.random.choice(list(range(scope[0], scope[1])), num_size, False)
             batch['word'].append(self.data_word[indices])
+            batch['mask'].append(self.data_mask[indices])
 
         batch['word'] = np.concatenate(batch['word'], 0)
-
         batch['word'] = Variable(torch.from_numpy(batch['word']).long()) 
+        batch['mask'] = np.concatenate(batch['mask'], 0)
+        batch['mask'] = Variable(torch.from_numpy(batch['mask']).long()) 
+
 
         # To cuda
         if self.cuda:
