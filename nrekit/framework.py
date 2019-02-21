@@ -12,6 +12,12 @@ from torch.autograd import Variable
 from torch.nn import functional as F
 import argparse
 
+def warmup_linear(global_step, warmup_step):
+    if global_step < warmup_step:
+        return global_step / warmup_step
+    else:
+        return 1.0
+
 class Model(nn.Module):
     def __init__(self, sentence_encoder):
         '''
@@ -173,8 +179,8 @@ class Framework:
         iter_right2 = 0.0
         iter_sample2 = 0.0
 
-        s_num_size = 10
-        s_num_class = 50
+        s_num_class = 8
+        s_num_size = batch_size // s_num_class
 
         for it in range(start_iter, start_iter + train_iter):
             scheduler.step()
@@ -404,7 +410,8 @@ class SuperviseFramework:
             return checkpoint
         else:
             raise Exception("No checkpoint found at '%s'" % ckpt)
-   
+  
+    
     def train_encoder_epoch(self,
               model,
               model_name,
@@ -417,7 +424,10 @@ class SuperviseFramework:
               cuda=True,
               pretrain_model=None,
               support=False,
-              support_size=10):
+              support_size=10,
+              warmup=True,
+              warmup_step=300,
+              grad_iter=1):
         '''
         model: a FewShotREModel instance
         model_name: Name of the model
@@ -451,14 +461,16 @@ class SuperviseFramework:
 
         # Training
         best_acc = 0
+        global_step = 0
         
         for epoch in range(train_epoch):
-            it = 0
+            epoch_step = 0
             iter_loss = 0.0
             iter_right = 0.0
             iter_sample = 0.0
             while True:
-                it += 1
+                global_step += 1
+                epoch_step += 1
                 batch_data = self.train_data_loader.next_batch_one_epoch(batch_size)
                 if batch_data is None:
                     break
@@ -468,17 +480,26 @@ class SuperviseFramework:
                     model.forward_base(batch_data, support_data)
                 else:
                     model.forward_base(batch_data)
-                loss = model.loss()
+                loss = model.loss() / grad_iter
                 right = model.accuracy()
-                optimizer.zero_grad()
                 loss.backward()
-                optimizer.step()
+                
+                # warmup
+                cur_lr = learning_rate
+                if warmup:
+                    cur_lr *= warmup_linear(global_step, warmup_step)
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = cur_lr
+
+                if global_step % grad_iter == 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
                 
                 iter_loss += loss
                 iter_right += right
                 iter_sample += 1
 
-                sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%'.format(it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample) +'\r')
+                sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%'.format(epoch_step, iter_loss / iter_sample, 100 * iter_right / iter_sample) +'\r')
                 sys.stdout.flush()
 
             print('')
@@ -494,7 +515,6 @@ class SuperviseFramework:
                 
         print("\n####################\n")
         print("Finish training " + model_name)
-
 
     def train_encoder(self,
               model,
@@ -686,17 +706,19 @@ class SuperviseFramework:
     def train_siamese(self,
               model,
               model_name,
+              optimizer,
               batch_size=200,
               ckpt_dir='./checkpoint',
               learning_rate=1.,
-              lr_step_size=40000,
-              weight_decay=1e-5,
-              train_iter=80000,
+              train_iter=30000,
               val_iter=2000,
               val_step=2000,
               cuda=True,
               pretrain_model=None,
-              optimizer=optim.SGD):
+              warmup=True,
+              warmup_step=300,
+              s_num_class=8,
+              grad_iter=1):
         '''
         model: a FewShotREModel instance
         model_name: Name of the model
@@ -717,11 +739,6 @@ class SuperviseFramework:
         print("Start training...")
         model.train()
         
-        # Init
-        parameters_to_optimize = filter(lambda x:x.requires_grad, model.parameters())
-        opt = optimizer(parameters_to_optimize, learning_rate, weight_decay=weight_decay)
-        scheduler = optim.lr_scheduler.StepLR(opt, step_size=lr_step_size)
-
         if pretrain_model:
             checkpoint = self.__load_model__(pretrain_model)
             model.load_state_dict(checkpoint['state_dict'])
@@ -733,42 +750,58 @@ class SuperviseFramework:
             model = model.cuda()
 
         # Training
+        global_step = 0
+
         best_prec = 0
         not_best_count = 0 # Stop training after several epochs without improvement.
         iter_loss = 0.0
         iter_right = 0.0
         iter_sample = 0.0
+        iter_prec = 0.0
+        iter_recall = 0.0
 
-        s_num_size = 10
-        s_num_class = 50
+        s_num_size = batch_size // s_num_class
 
         for it in range(start_iter, start_iter + train_iter):
-            scheduler.step()
+            global_step += 1
 
             batch_data = self.train_data_loader.next_multi_class(num_size=s_num_size, num_class=s_num_class)
             model(batch_data, s_num_size, s_num_class)
 
-            loss = model._loss
+            loss = model._loss / grad_iter
             right = model._accuracy
-            opt.zero_grad()
             loss.backward()
-            opt.step()
+
+            # warmup
+            cur_lr = learning_rate
+            if warmup:
+                cur_lr *= warmup_linear(global_step, warmup_step)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = cur_lr
+            
+            if global_step % grad_iter == 0:
+                optimizer.step()
+                optimizer.zero_grad()
 
             iter_loss += loss
             iter_right += right
             iter_sample += 1
+            iter_prec += model._prec
+            iter_recall += model._recall
             sys.stdout.write('step: {0:4} | loss: {1:2.6f}, accuracy: {2:3.2f}%, prec: {3:3.2f}%, recall: {4:3.2f}%'.format( \
-                it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample, 100.0 * model._prec, 100.0 * model._recall) +'\r')
+                it + 1, iter_loss / iter_sample, 100 * iter_right / iter_sample, 100.0 * iter_prec / iter_sample, 100.0 * iter_recall / iter_sample) +'\r')
             sys.stdout.flush()
 
             if it % val_step == 0:
                 iter_loss = 0.
                 iter_right = 0.
                 iter_sample = 0.
+                iter_prec = 0.
+                iter_recall = 0.
 
             if (it + 1) % val_step == 0:
                 print('')
-                prec = self.eval_siamese(model, eval_iter=val_iter, threshold=0.5)
+                prec = self.eval_siamese(model, eval_iter=val_iter, threshold=0.5, s_num_size=s_num_size, s_num_class=s_num_class)
                 print('')
                 if prec > best_prec:
                     print('Best checkpoint')

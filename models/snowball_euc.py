@@ -16,8 +16,6 @@ class Siamese(nn.Module):
         nn.Module.__init__(self)
         self.sentence_encoder = sentence_encoder # Should be different from main sentence encoder
         self.hidden_size = hidden_size
-        # self.fc1 = nn.Linear(hidden_size * 2, hidden_size * 2)
-        # self.fc2 = nn.Linear(hidden_size * 2, 1)
         self.fc = nn.Linear(hidden_size, 1)
         self.cost = nn.BCELoss(reduction="none")
         self.drop = nn.Dropout(drop_rate)
@@ -56,13 +54,9 @@ class Siamese(nn.Module):
         label[:x1.size(0)] = 1
         z1 = torch.cat([x1, y1], 0)
         z2 = torch.cat([x2, y2], 0)
-        z = z1 * z2
-        z = self.drop(z)
-        z = self.fc(z).squeeze()
-        # z = torch.cat([z1, z2], -1)
-        # z = F.relu(self.fc1(z))
-        # z = self.fc2(z).squeeze()
-        score = torch.sigmoid(z)
+        dis = torch.pow(z1 - z2, 2)
+        dis = self.drop(dis)
+        score = torch.sigmoid(self.fc(dis).squeeze())
         self._loss = self.cost(score, label.float()).mean()
         pred = torch.zeros((score.size(0))).long().cuda()
         pred[score > threshold] = 1
@@ -118,7 +112,7 @@ class Siamese(nn.Module):
     
 class Snowball(nrekit.framework.Model):
     
-    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230, drop_rate=0.5, weight_table=None):
+    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230, drop_rate=0.5):
         nrekit.framework.Model.__init__(self, sentence_encoder)
         self.hidden_size = hidden_size
         self.base_class = base_class
@@ -128,7 +122,6 @@ class Snowball(nrekit.framework.Model):
         # self.cost = nn.BCEWithLogitsLoss()
         self.cost = nn.BCELoss(reduction="none")
         # self.cost = nn.CrossEntropyLoss()
-        self.weight_table = weight_table
         
         # snowball hyperparameter
         self.parser.add_argument("--phase1_add_num", help="number of instances added in phase 1", type=int, default=10)
@@ -160,14 +153,10 @@ class Snowball(nrekit.framework.Model):
         x = self.fc(x) # (batch_size, base_class)
 
         x = torch.sigmoid(x)
-        if self.weight_table is None:
-            weight = 1.0
-        else:
-            weight = self.weight_table[data['label']].unsqueeze(1).expand(-1, self.base_class).contiguous().view(-1)
         label = torch.zeros((batch_size, self.base_class)).cuda()
         label.scatter_(1, data['label'].view(-1, 1), 1) # (batch_size, base_class)
         loss_array = self.__loss__(x, label)
-        self._loss = ((label.view(-1) + 1.0 / self.base_class) * weight * loss_array).mean() * self.base_class
+        self._loss = ((label.view(-1) + 1.0 / self.base_class) * loss_array).mean() * self.base_class
         # self._loss = self.__loss__(x, data['label'])
         
         _, pred = x.max(-1)
@@ -185,9 +174,8 @@ class Snowball(nrekit.framework.Model):
         # concat
         support = {}
         support['word'] = torch.cat([support_pos['word'], support_neg['word']], 0)
-        if 'pos1' in support_pos:
-            support['pos1'] = torch.cat([support_pos['pos1'], support_neg['pos1']], 0)
-            support['pos2'] = torch.cat([support_pos['pos2'], support_neg['pos2']], 0)
+        support['pos1'] = torch.cat([support_pos['pos1'], support_neg['pos1']], 0)
+        support['pos2'] = torch.cat([support_pos['pos2'], support_neg['pos2']], 0)
         support['mask'] = torch.cat([support_pos['mask'], support_neg['mask']], 0)
         support['label'] = torch.cat([support_pos['label'], support_neg['label']], 0)
         
@@ -269,9 +257,8 @@ class Snowball(nrekit.framework.Model):
         ins_id: id of the instance
         '''
         dataset_dst['word'].append(dataset_src['word'][ins_id])
-        if 'pos1' in dataset_src:
-            dataset_dst['pos1'].append(dataset_src['pos1'][ins_id])
-            dataset_dst['pos2'].append(dataset_src['pos2'][ins_id])
+        dataset_dst['pos1'].append(dataset_src['pos1'][ins_id])
+        dataset_dst['pos2'].append(dataset_src['pos2'][ins_id])
         dataset_dst['mask'].append(dataset_src['mask'][ins_id])
         if 'id' in dataset_dst and 'id' in dataset_src:
             dataset_dst['id'].append(dataset_src['id'][ins_id])
@@ -288,9 +275,8 @@ class Snowball(nrekit.framework.Model):
         ins_id: id of the instance
         '''
         dataset_dst['word'] = torch.cat([dataset_dst['word'], dataset_src['word'][ins_id].unsqueeze(0)], 0)
-        if 'pos1' in dataset_src:
-            dataset_dst['pos1'] = torch.cat([dataset_dst['pos1'], dataset_src['pos1'][ins_id].unsqueeze(0)], 0)
-            dataset_dst['pos2'] = torch.cat([dataset_dst['pos2'], dataset_src['pos2'][ins_id].unsqueeze(0)], 0)
+        dataset_dst['pos1'] = torch.cat([dataset_dst['pos1'], dataset_src['pos1'][ins_id].unsqueeze(0)], 0)
+        dataset_dst['pos2'] = torch.cat([dataset_dst['pos2'], dataset_src['pos2'][ins_id].unsqueeze(0)], 0)
         dataset_dst['mask'] = torch.cat([dataset_dst['mask'], dataset_src['mask'][ins_id].unsqueeze(0)], 0)
         if 'id' in dataset_dst and 'id' in dataset_src:
             dataset_dst['id'].append(dataset_src['id'][ins_id])
@@ -307,9 +293,8 @@ class Snowball(nrekit.framework.Model):
         if (len(dataset['word']) == 0):
             return
         dataset['word'] = torch.stack(dataset['word'], 0).cuda()
-        if 'pos1' in dataset:
-            dataset['pos1'] = torch.stack(dataset['pos1'], 0).cuda()
-            dataset['pos2'] = torch.stack(dataset['pos2'], 0).cuda()
+        dataset['pos1'] = torch.stack(dataset['pos1'], 0).cuda()
+        dataset['pos2'] = torch.stack(dataset['pos2'], 0).cuda()
         dataset['mask'] = torch.stack(dataset['mask'], 0).cuda()
 
     def _infer(self, dataset):
@@ -372,10 +357,7 @@ class Snowball(nrekit.framework.Model):
                 entpair = support_pos['entpair'][i]
                 exist_id[support_pos['id'][i]] = 1
                 if entpair not in entpair_support:
-                    if 'pos1' in support_pos:
-                        entpair_support[entpair] = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
-                    else:
-                        entpair_support[entpair] = {'word': [], 'mask': []}
+                    entpair_support[entpair] = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
                 self._add_ins_to_data(entpair_support[entpair], support_pos, i)
             
             ## pick all ins with the same entpairs in distant data and choose with siamese network
@@ -385,10 +367,7 @@ class Snowball(nrekit.framework.Model):
                 raw = distant.get_same_entpair_ins(entpair) # ins with the same entpair
                 if raw is None:
                     continue
-                if 'pos1' in support_pos:
-                    entpair_distant[entpair] = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': []}
-                else:
-                    entpair_distant[entpair] = {'word': [], 'mask': [], 'id': [], 'entpair': []}
+                entpair_distant[entpair] = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': []}
                 for i in range(raw['word'].size(0)):
                     if raw['id'][i] not in exist_id: # don't pick sentences already in the support set
                         self._add_ins_to_data(entpair_distant[entpair], raw, i)
