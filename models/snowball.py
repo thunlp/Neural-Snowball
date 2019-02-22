@@ -72,10 +72,31 @@ class Siamese(nn.Module):
         self._prec = float(np.logical_and(pred == 1, label == 1).sum()) / float((pred == 1).sum() + 1)
         self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
 
-    def forward_infer(self, x, y, threshold=0.5):
-        x = self.sentence_encoder(x)
+    def encode(self, dataset, batch_size=0): 
+        if batch_size == 0:
+            x = self.sentence_encoder(dataset)
+        else:
+            total_length = dataset['word'].size(0)
+            max_iter = total_length // batch_size
+            if total_length % batch_size != 0:
+                max_iter += 1
+            x = []
+            for it in range(max_iter):
+                scope = list(range(batch_size * it, min(batch_size * (it + 1), total_length)))
+                with torch.no_grad():
+                    _ = {'word': dataset['word'][scope], 'mask': dataset['mask'][scope]}
+                    if 'pos1' in dataset:
+                        _['pos1'] = dataset['pos1'][scope]
+                        _['pos2'] = dataset['pos2'][scope]
+                    _x = self.sentence_encoder(_)
+                x.append(_x.detach())
+            x = torch.cat(x, 0)
+        return x
+
+    def forward_infer(self, x, y, threshold=0.5, batch_size=0):
+        x = self.encode(x, batch_size=batch_size)
         support_size = x.size(0)
-        y = self.sentence_encoder(y)
+        y = self.encode(y, batch_size=batch_size)
         x = x.unsqueeze(1)
         y = y.unsqueeze(0)
         dis = torch.pow(x - y, 2).view(-1, self.hidden_size)
@@ -87,10 +108,10 @@ class Siamese(nn.Module):
         pred[pred > 0] = 1
         return pred
 
-    def forward_infer_sort(self, x, y):
-        x = self.sentence_encoder(x)
+    def forward_infer_sort(self, x, y, batch_size=0):
+        x = self.encode(x, batch_size=batch_size)
         support_size = x.size(0)
-        y = self.sentence_encoder(y)
+        y = self.encode(y, batch_size=batch_size)
         x = x.unsqueeze(1)
         y = y.unsqueeze(0)
         dis = torch.pow(x - y, 2)
@@ -138,10 +159,13 @@ class Snowball(nrekit.framework.Model):
         self.parser.add_argument("--phase2_cl_th", help="threshold of relation classifier in phase 2", type=float, default=0.9)
 
         # fine-tune hyperparameter
-        self.parser.add_argument("--finetune_epoch", help="num of epochs when finetune", type=float, default=20)
-        self.parser.add_argument("--finetune_batch_size", help="batch size when finetune", type=float, default=50)
+        self.parser.add_argument("--finetune_epoch", help="num of epochs when finetune", type=int, default=20)
+        self.parser.add_argument("--finetune_batch_size", help="batch size when finetune", type=int, default=50)
         self.parser.add_argument("--finetune_lr", help="learning rate when finetune", type=float, default=0.1)
         self.parser.add_argument("--finetune_wd", help="weight decay rate when finetune", type=float, default=1e-5)
+        
+        # inference batch_size
+        self.parser.add_argument("--infer_batch_size", help="batch size when inference", type=int, default=0)
 
         self.args = self.parser.parse_args()
 
@@ -193,11 +217,11 @@ class Snowball(nrekit.framework.Model):
         
         # train
         self._train_finetune_init()
-        support_rep = self.sentence_encoder(support)
+        support_rep = self.encode(support, self.args.infer_batch_size)
         self._train_finetune(support_rep, support['label'])
         
         # test
-        query_prob = self._infer(query).cpu().detach().numpy()
+        query_prob = self._infer(query, batch_size=self.args.infer_batch_size).cpu().detach().numpy()
         label = query['label'].cpu().detach().numpy()
         self._baseline_accuracy = float(np.logical_or(np.logical_and(query_prob > threshold, label == 1), np.logical_and(query_prob < threshold, label == 0)).sum()) / float(query_prob.shape[0])
         if (query_prob > threshold).sum() == 0:
@@ -312,13 +336,34 @@ class Snowball(nrekit.framework.Model):
             dataset['pos2'] = torch.stack(dataset['pos2'], 0).cuda()
         dataset['mask'] = torch.stack(dataset['mask'], 0).cuda()
 
-    def _infer(self, dataset):
+    def encode(self, dataset, batch_size=0):
+        if batch_size == 0:
+            x = self.sentence_encoder(dataset)
+        else:
+            total_length = dataset['word'].size(0)
+            max_iter = total_length // batch_size
+            if total_length % batch_size != 0:
+                max_iter += 1
+            x = []
+            for it in range(max_iter):
+                scope = list(range(batch_size * it, min(batch_size * (it + 1), total_length)))
+                with torch.no_grad():
+                    _ = {'word': dataset['word'][scope], 'mask': dataset['mask'][scope]}
+                    if 'pos1' in dataset:
+                        _['pos1'] = dataset['pos1'][scope]
+                        _['pos2'] = dataset['pos2'][scope]
+                    _x = self.sentence_encoder(_)
+                x.append(_x.detach())
+            x = torch.cat(x, 0)
+        return x
+
+    def _infer(self, dataset, batch_size=0):
         '''
         get prob output of the finetune network with the input dataset
         dataset: input dataset
         return: prob output of the finetune network
         '''
-        x = self.sentence_encoder(dataset)
+        x = self.encode(dataset, batch_size=batch_size) 
         x = torch.matmul(x, self.new_W) + self.new_bias # (batch_size, 1)
         x = torch.sigmoid(x)
         return x.view(-1)
@@ -348,7 +393,7 @@ class Snowball(nrekit.framework.Model):
         sort_ori_threshold = self.args.phase2_cl_th
 
         # get neg representations with sentence encoder
-        support_neg_rep = self.sentence_encoder(support_neg)
+        support_neg_rep = self.encode(support_neg, batch_size=self.args.infer_batch_size)
         
         # init
         self._train_finetune_init()
@@ -396,7 +441,7 @@ class Snowball(nrekit.framework.Model):
                 self._dataset_stack_and_cuda(entpair_distant[entpair])
                 if len(entpair_support[entpair]['word']) == 0 or len(entpair_distant[entpair]['word']) == 0:
                     continue
-                pick_or_not = self.siamese_model.forward_infer_sort(entpair_support[entpair], entpair_distant[entpair])
+                pick_or_not = self.siamese_model.forward_infer_sort(entpair_support[entpair], entpair_distant[entpair], batch_size=self.args.infer_batch_size)
                 # pick_or_not = self.siamese_model.forward_infer_sort(original_support_pos, entpair_distant[entpair], threshold=threshold_for_phase1)
                 # pick_or_not = self._infer(entpair_distant[entpair]) > threshold
       
@@ -420,7 +465,7 @@ class Snowball(nrekit.framework.Model):
                 self._phase1_total += entpair_distant[entpair]['word'].size(0)
 
             ## build new support set
-            support_pos_rep = self.sentence_encoder(support_pos)
+            support_pos_rep = self.encode(support_pos, batch_size=self.args.infer_batch_size)
             support_rep = torch.cat([support_pos_rep, support_neg_rep], 0)
             support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
             
@@ -436,9 +481,9 @@ class Snowball(nrekit.framework.Model):
             candidate = distant.get_random_candidate(self.pos_class, candidate_num_class, candidate_num_ins_per_class)
 
             ## -- method 1: directly use the classifier --
-            candidate_prob = self._infer(candidate)
+            candidate_prob = self._infer(candidate, batch_size=self.args.infer_batch_size)
             ## -- method 2: use siamese network --
-            pick_or_not = self.siamese_model.forward_infer_sort(support_pos, candidate)
+            pick_or_not = self.siamese_model.forward_infer_sort(support_pos, candidate, batch_size=self.args.infer_batch_size)
 
             ## -- method A: use threshold --
             '''
@@ -461,7 +506,7 @@ class Snowball(nrekit.framework.Model):
                     self._add_ins_to_vdata(support_pos, candidate, iid, label=1)
 
             ## build new support set
-            support_pos_rep = self.sentence_encoder(support_pos)
+            support_pos_rep = self.encode(support_pos, self.args.infer_batch_size)
             support_rep = torch.cat([support_pos_rep, support_neg_rep], 0)
             support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
 
@@ -478,7 +523,7 @@ class Snowball(nrekit.framework.Model):
         threshold: ins with prob > threshold will be classified as positive
         return (accuracy at threshold, precision at threshold, recall at threshold, f1 at threshold, auc), 
         '''
-        query_prob = self._infer(query).cpu().detach().numpy()
+        query_prob = self._infer(query, batch_size=self.args.infer_batch_size).cpu().detach().numpy()
         label = query['label'].cpu().detach().numpy()
         accuracy = float(np.logical_or(np.logical_and(query_prob > threshold, label == 1), np.logical_and(query_prob < threshold, label == 0)).sum()) / float(query_prob.shape[0])
         if (query_prob > threshold).sum() == 0:
