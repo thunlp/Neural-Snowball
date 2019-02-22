@@ -8,7 +8,7 @@ from pytorch_pretrained_bert import BertAdam
 
 max_length = 90
 train_data_loader = DataLoader('./data/train_train.json', vocab='./data/bert_vocab.txt', max_length=max_length)
-val_data_loader = DataLoader('./data/train_val.json', vocab='./data/bert_vocab.txt', max_length=max_length, rel2id=train_data_loader.rel2id, shuffle=False)
+val_data_loader = DataLoader('./data/val.json', vocab='./data/bert_vocab.txt', max_length=max_length, rel2id=train_data_loader.rel2id, shuffle=False)
 
 framework = nrekit.framework.SuperviseFramework(train_data_loader, val_data_loader)
 sentence_encoder = nrekit.sentence_encoder.BERTSentenceEncoder('./data/bert-base-uncased')
