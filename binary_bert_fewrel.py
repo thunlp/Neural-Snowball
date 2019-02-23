@@ -4,7 +4,7 @@ import sys
 import torch
 from torch import optim
 from nrekit.data_loader_bert import JSONFileDataLoaderBERT as DataLoader
-
+import argparse
 
 max_length = 90
 train_data_loader = DataLoader('./data/train.json', vocab='./data/bert_vocab.txt', max_length=max_length)
@@ -33,4 +33,6 @@ model_name = 'bert_snowball'
 # framework.train(model, model_name, model2=model2)
 # framework.eval_siamese(model2, threshold=0.99)
 # print('')
-framework.eval(model)
+
+# framework.eval_baseline(model, support_size=5, query_class=10)
+framework.eval(model, support_size=10, query_class=10)
