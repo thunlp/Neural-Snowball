@@ -444,7 +444,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         target_classes = random.sample(self.rel2scope.keys(), query_class) # 0 class is the new relation 
         support_pos = {'word': [], 'mask': [], 'id': [], 'entpair': []}
         support_neg = {'word': [], 'mask': [], 'id': [], 'entpair': []}
-        query = {'word': [], 'label': [], 'mask': []}
+        query = {'word': [], 'label': [], 'mask': [], 'entpair': []}
 
         # New relation
         scope = self.rel2scope[target_classes[0]]
@@ -466,6 +466,8 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         query['word'].append(query_word)
         query['mask'].append(query_mask)
         query['label'] += [1] * query_size
+        query['entpair'] = list(self.data_entpair[indices[support_pos_size:]])
+
 
         # Other query classes (negative)
         if use_train_neg:
@@ -480,6 +482,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
             query['word'].append(neg_loader.data_word[indices])  
             query['mask'].append(neg_loader.data_mask[indices])  
             query['label'] += [0] * query_size
+            query['entpair'] += list(self.data_entpair[indices])
 
         query['word'] = np.concatenate(query['word'], 0)
         query['mask'] = np.concatenate(query['mask'], 0)
@@ -620,7 +623,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         target_classes = self.rel2scope.keys()
         support_pos = {'word': [], 'mask': [], 'id': [], 'entpair': []}
         support_neg = {'word': [], 'mask': [], 'id': [], 'entpair': [], 'label': []}
-        query = {'word': [], 'mask': [], 'label': []}
+        query = {'word': [], 'mask': [], 'label': [], 'entpair': []}
 
         # New relation
         scope = self.rel2scope[main_class]
@@ -629,6 +632,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
         support_mask, query_mask, _ = np.split(self.data_mask[indices], [support_pos_size, support_pos_size + query_size])
         support_id = list(indices[:support_pos_size])
         support_entpair = list(self.data_entpair[indices[:support_pos_size]])
+        query['entpair'] += list(self.data_entpair[indices[support_pos_size:]])
 
         # support_neg = train_data_loader.next_batch(support_pos_size * support_neg_rate)
         # support_neg['label'] = np.zeros((support_neg_rate * support_pos_size), dtype=np.int32)
@@ -667,6 +671,7 @@ class JSONFileDataLoaderBERT(FileDataLoader):
             query['word'].append(neg_loader.data_word[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])  
             query['mask'].append(neg_loader.data_mask[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])
             query['label'] += [0] * query_size
+            query['entpair'] += list(self.data_entpair[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])
 
         query['word'] = np.concatenate(query['word'], 0)
         query['mask'] = np.concatenate(query['mask'], 0)
