@@ -104,7 +104,7 @@ class Siamese(nn.Module):
 
 class Snowball(nrekit.framework.Model):
     
-    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230, drop_rate=0.5, weight_table=None):
+    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230, drop_rate=0.5, weight_table=None, neg_loader=None):
         nrekit.framework.Model.__init__(self, sentence_encoder)
         self.hidden_size = hidden_size
         self.base_class = base_class
@@ -115,7 +115,8 @@ class Snowball(nrekit.framework.Model):
         self.cost = nn.BCELoss(reduction="none")
         # self.cost = nn.CrossEntropyLoss()
         self.weight_table = weight_table
-        self.info = json.load(open('./data/val_info.json'))
+        self.neg_loader = neg_loader
+        # self.info = json.load(open('./data/val_info.json'))
         
         # snowball hyperparameter
         self.parser.add_argument("--phase1_add_num", help="number of instances added in phase 1", type=int, default=10)
@@ -185,8 +186,10 @@ class Snowball(nrekit.framework.Model):
         
         # train
         self._train_finetune_init()
-        support_rep = self.encode(support, self.args.infer_batch_size)
-        self._train_finetune(support_rep, support['label'])
+        # support_rep = self.encode(support, self.args.infer_batch_size)
+        support_pos_rep = self.encode(support_pos, self.args.infer_batch_size)
+        # self._train_finetune(support_rep, support['label'])
+        self._train_finetune(support_pos_rep, support['label'])
         
         # test
         query_prob = self._infer(query, batch_size=self.args.infer_batch_size).cpu().detach().numpy()
@@ -243,10 +246,26 @@ class Snowball(nrekit.framework.Model):
             random.shuffle(order)
             for i in range(max_iter):            
                 x = data_repre[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
-                batch_label = label[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
+                # batch_label = label[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
+                
+                # neg sampling
+                # ---------------------
+                batch_label = torch.ones((x.size(0))).long().cuda()
+                neg_size = int(x.size(0) * 1)
+                neg = self.neg_loader.next_batch(neg_size)
+                neg = self.encode(neg, self.args.infer_batch_size)
+                x = torch.cat([x, neg], 0)
+                batch_label = torch.cat([batch_label, torch.zeros((neg_size)).long().cuda()], 0)
+                # ---------------------
+
                 x = torch.matmul(x, self.new_W) + self.new_bias # (batch_size, 1)
                 x = torch.sigmoid(x)
-                iter_loss = self.__loss__(x, batch_label.float()).mean()
+
+                # iter_loss = self.__loss__(x, batch_label.float()).mean()
+                weight = torch.ones(batch_label.size(0)).float().cuda()
+                weight[batch_label == 0] = 1 / float(max_epoch)
+                iter_loss = (self.__loss__(x, batch_label.float()) * weight).mean()
+
                 optimizer.zero_grad()
                 iter_loss.backward(retain_graph=True)
                 optimizer.step()
@@ -364,10 +383,10 @@ class Snowball(nrekit.framework.Model):
         support_neg_rep = self.encode(support_neg, batch_size=self.args.infer_batch_size)
         
         # init
-        self._train_finetune_init()
-        print("---- original samples ----")
-        for i in range(len(support_pos['id'])):
-            print(support_pos['entpair'][i])
+        # self._train_finetune_init()
+        # print("---- original samples ----")
+        # for i in range(len(support_pos['id'])):
+        #     print(support_pos['entpair'][i])
         self._metric = []
 
         # copy
@@ -393,6 +412,10 @@ class Snowball(nrekit.framework.Model):
                     else:
                         entpair_support[entpair] = {'word': [], 'mask': []}
                 self._add_ins_to_data(entpair_support[entpair], support_pos, i)
+
+            print('')
+            print(entpair_support.keys())
+            print('')
             
             ## pick all ins with the same entpairs in distant data and choose with siamese network
             self._phase1_add_num = 0 # total number of snowball instances
@@ -453,9 +476,9 @@ class Snowball(nrekit.framework.Model):
                 self._phase1_total += candidate['word'].size(0)
             '''
             ## build new support set
-            print("---- new samples ----")
-            for i in range(len(support_pos['id'])):
-                print(support_pos['entpair'][i])
+            # print("---- new samples ----")
+            # for i in range(len(support_pos['id'])):
+            #     print(support_pos['entpair'][i])
 
             support_pos_rep = self.encode(support_pos, batch_size=self.args.infer_batch_size)
             support_rep = torch.cat([support_pos_rep, support_neg_rep], 0)
@@ -463,7 +486,8 @@ class Snowball(nrekit.framework.Model):
             
             ## finetune
             # self._train_finetune_init()
-            self._train_finetune(support_rep, support_label)
+            # self._train_finetune(support_rep, support_label)
+            self._train_finetune(support_pos_rep, support_label)
             self._forward_eval_binary(query, threshold)
             # self._metric.append(np.array([self._f1, self._prec, self._recall]))
             print('\nphase1 add {} ins / {}'.format(self._phase1_add_num, self._phase1_total))
@@ -504,7 +528,8 @@ class Snowball(nrekit.framework.Model):
 
             ## finetune
             # self._train_finetune_init()
-            self._train_finetune(support_rep, support_label)
+            # self._train_finetune(support_rep, support_label)
+            self._train_finetune(support_pos_rep, support_label)
             self._forward_eval_binary(query, threshold)
             self._metric.append(np.array([self._f1, self._prec, self._recall]))
             print('\nphase2 add {} ins / {}'.format(self._phase2_add_num, self._phase2_total))
@@ -523,16 +548,16 @@ class Snowball(nrekit.framework.Model):
             precision = 0
         else:
             precision = float(np.logical_and(query_prob > threshold, label == 1).sum()) / float((query_prob > threshold).sum())
-            if 'entpair' in query:
-                wrong_ans = np.logical_and(query_prob > threshold, label == 0)
-                cnt = 0
-                for i in range(wrong_ans.shape[0]):
-                    if wrong_ans[i]:
-                        print(query['id'][i])
-                        print('wrong: ' + query['entpair'][i] + ' | ' + self.info[query['id'][i]])
-                        cnt += 1
-                        if cnt > 50:
-                            break
+            # if 'entpair' in query:
+            #     wrong_ans = np.logical_and(query_prob > threshold, label == 0)
+            #     cnt = 0
+            #     for i in range(wrong_ans.shape[0]):
+            #         if wrong_ans[i]:
+            #             print(query['id'][i])
+            #             print('wrong: ' + query['entpair'][i] + ' | ' + self.info[query['id'][i]])
+            #             cnt += 1
+            #             if cnt > 50:
+            #                 break
         recall = float(np.logical_and(query_prob > threshold, label == 1).sum()) / float((label == 1).sum())
         if precision + recall == 0:
             f1 = 0
