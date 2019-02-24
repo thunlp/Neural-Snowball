@@ -37,7 +37,7 @@ val_data_loader = DataLoader('./data/val.json', './data/glove.6B.50d.json', max_
 test_data_loader = DataLoader('./data/test.json', './data/glove.6B.50d.json', max_length=max_length)
 distant = DataLoader('./data/distant.json', './data/glove.6B.50d.json', max_length=max_length, distant=True)
 
-encoder = nrekit.sentence_encoder.CNNSentenceEncoder(train_data_loader.word_vec_mat, max_length)
+encoder = nrekit.sentence_encoder.CNNSentenceEncoder(train_train_data_loader.word_vec_mat, max_length)
 ckpt_encoder = torch.load('./checkpoint/cnn_encoder_on_fewrel.pth.tar.bak')['state_dict']
 encoder.load_state_dict(ckpt_encoder)
 encoder.cuda()
@@ -46,7 +46,7 @@ encoder.eval()
 for data_loader, name in [(train_train_data_loader, 'train_train'), (train_val_data_loader, 'train_val'), (val_data_loader, 'val'), (test_data_loader, 'test')]:
     get_repre(encoder, data_loader, './_repre/' + 'cnn_encoder_on_fewrel.' + name + '.npy')
 
-siamese = nrekit.sentence_encoder.CNNSentenceEncoder(train_data_loader.word_vec_mat, max_length)
+siamese = nrekit.sentence_encoder.CNNSentenceEncoder(train_train_data_loader.word_vec_mat, max_length)
 ckpt_siamese = torch.load('./checkpoint/cnn_siamese_euc_on_fewrel.pth.tar.bak')['state_dict']
 siamese.load_state_dict(ckpt_siamese)
 siamese.cuda()
