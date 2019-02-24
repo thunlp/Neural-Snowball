@@ -487,7 +487,7 @@ class JSONFileDataLoader(FileDataLoader):
         batch['mask'] = Variable(torch.from_numpy(self.data_mask[scope]).long())
         batch['label']= Variable(torch.from_numpy(self.data_label[scope]).long())
         batch['id']   = scope
-        batch['entpair'] = entpair * len(scope)
+        batch['entpair'] = [entpair] * len(scope)
 
         # To cuda
         if self.cuda:
@@ -773,7 +773,7 @@ class JSONFileDataLoader(FileDataLoader):
         target_classes = self.rel2scope.keys()
         support_pos = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': []}
         support_neg = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': [], 'label': []}
-        query = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'label': []}
+        query = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'label': [], 'entpair': [], 'id': []}
 
         # New relation
         scope = self.rel2scope[main_class]
@@ -784,6 +784,8 @@ class JSONFileDataLoader(FileDataLoader):
         support_mask, query_mask, _ = np.split(self.data_mask[indices], [support_pos_size, support_pos_size + query_size])
         support_id = list(indices[:support_pos_size])
         support_entpair = list(self.data_entpair[indices[:support_pos_size]])
+        query['entpair'] += list(self.data_entpair[indices[support_pos_size:]])
+        query['id'] += list(indices[support_pos_size:])
 
         # support_neg = train_data_loader.next_batch(support_pos_size * support_neg_rate)
         # support_neg['label'] = np.zeros((support_neg_rate * support_pos_size), dtype=np.int32)
@@ -832,6 +834,8 @@ class JSONFileDataLoader(FileDataLoader):
             query['pos2'].append(neg_loader.data_pos2[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])    
             query['mask'].append(neg_loader.data_mask[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])
             query['label'] += [0] * query_size
+            query['entpair'] += list(neg_loader.data_entpair[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])
+            query['id'] += list(range(scope[0]+support_pos_size, scope[0]+support_pos_size+query_size))
 
         query['word'] = np.concatenate(query['word'], 0)
         query['pos1'] = np.concatenate(query['pos1'], 0)
