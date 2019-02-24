@@ -112,3 +112,5 @@ _processed_data
 checkpoint
 
 log
+
+*.txt
