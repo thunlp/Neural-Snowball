@@ -1,0 +1,12 @@
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.2 --finetune_epoch 30
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.2 --finetune_epoch 40
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.2 --finetune_epoch 50
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.1 --finetune_epoch 30
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.1 --finetune_epoch 40
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.1 --finetune_epoch 50
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.05 --finetune_epoch 30
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.05 --finetune_epoch 40
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.05 --finetune_epoch 50
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.01 --finetune_epoch 30
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.01 --finetune_epoch 40
+python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.01 --finetune_epoch 50

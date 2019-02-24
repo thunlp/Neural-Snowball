@@ -363,8 +363,9 @@ class Framework:
         iter_bprec = 0.0
         iter_brecall = 0.0
         snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32) ]
-        for rel in ['P2094']:
-            support_pos, support_neg, query, pos_class = eval_dataset.get_selected(self.train_data_loader, support_size, 10, query_size, query_class, main_class=rel, use_train_neg=False)
+        for rel in eval_dataset.rel2scope:
+        # for rel in ['P2094']:
+            support_pos, support_neg, query, pos_class = eval_dataset.get_selected(self.train_data_loader, support_size, 10, query_size, query_class, main_class=rel, use_train_neg=True, neg_train_loader=self.neg_train_loader)
 
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
             model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold)
@@ -434,7 +435,7 @@ class Framework:
         iter_brecall = 0.0
         snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32) ]
         for it in range(eval_iter):
-            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=False)
+            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 5, query_size, query_class, use_train_neg=True, neg_train_loader=self.neg_train_loader)
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
             # model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold)
 
@@ -447,8 +448,7 @@ class Framework:
             sys.stdout.flush()
         
         print('')
-        return iter_right / iter_sample
-
+        return '[EVAL] step: {0:4} | [baseline] f1: {1:1.4f}, prec: {2:3.2f}%, rec: {3:3.2f}%'.format(it + 1, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample)
 
     def eval(self,
             model,
@@ -487,7 +487,7 @@ class Framework:
         iter_brecall = 0.0
         snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32) ]
         for it in range(eval_iter):
-            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=False)
+            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=True, neg_train_loader=self.neg_train_loader)
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
             model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold)
 

@@ -537,7 +537,7 @@ class JSONFileDataLoader(FileDataLoader):
 
         return candidate
    
-    def get_one_new_relation(self, train_data_loader, support_pos_size, support_neg_rate, query_size, query_class, use_train_neg=False):
+    def get_one_new_relation(self, train_data_loader, support_pos_size, support_neg_rate, query_size, query_class, use_train_neg=False, neg_train_loader=None):
         '''
         get data for one new relation
         train_data_loader: training data loader
@@ -561,8 +561,10 @@ class JSONFileDataLoader(FileDataLoader):
         support_mask, query_mask, _ = np.split(self.data_mask[indices], [support_pos_size, support_pos_size + query_size])
         support_id = list(indices[:support_pos_size])
         support_entpair = list(self.data_entpair[indices[:support_pos_size]])
-
-        support_neg = train_data_loader.next_batch(support_pos_size * support_neg_rate)
+        
+        if neg_train_loader is None:
+            neg_train_loader = train_data_loader
+        support_neg = neg_train_loader.next_batch(support_pos_size * support_neg_rate)
         support_neg['label'] = np.zeros((support_neg_rate * support_pos_size), dtype=np.int32)
 
         support_pos['word'] = support_word
@@ -760,7 +762,7 @@ class JSONFileDataLoader(FileDataLoader):
 
         return support_pos, support_neg, query
 
-    def get_selected(self, train_data_loader, support_pos_size, support_neg_rate, query_size, query_class, main_class, use_train_neg=False):
+    def get_selected(self, train_data_loader, support_pos_size, support_neg_rate, query_size, query_class, main_class, use_train_neg=False, neg_train_loader=None):
         '''
         get data for one new relation
         train_data_loader: training data loader
@@ -789,13 +791,15 @@ class JSONFileDataLoader(FileDataLoader):
 
         # support_neg = train_data_loader.next_batch(support_pos_size * support_neg_rate)
         # support_neg['label'] = np.zeros((support_neg_rate * support_pos_size), dtype=np.int32)
-
-        for i, class_name in enumerate(train_data_loader.rel2scope.keys()[:support_neg_rate]):
-            scope = train_data_loader.rel2scope[class_name]
-            support_neg['word'].append(train_data_loader.data_word[scope[0]:scope[0]+support_pos_size])  
-            support_neg['pos1'].append(train_data_loader.data_pos1[scope[0]:scope[0]+support_pos_size])    
-            support_neg['pos2'].append(train_data_loader.data_pos2[scope[0]:scope[0]+support_pos_size])    
-            support_neg['mask'].append(train_data_loader.data_mask[scope[0]:scope[0]+support_pos_size])
+        
+        if neg_train_loader is None:
+            neg_train_loader = train_data_loader
+        for i, class_name in enumerate(neg_train_loader.rel2scope.keys()[:support_neg_rate]):
+            scope = neg_train_loader.rel2scope[class_name]
+            support_neg['word'].append(neg_train_loader.data_word[scope[0]:scope[0]+support_pos_size])  
+            support_neg['pos1'].append(neg_train_loader.data_pos1[scope[0]:scope[0]+support_pos_size])    
+            support_neg['pos2'].append(neg_train_loader.data_pos2[scope[0]:scope[0]+support_pos_size])    
+            support_neg['mask'].append(neg_train_loader.data_mask[scope[0]:scope[0]+support_pos_size])
             support_neg['label'] += [0] * support_pos_size
 
         support_neg['word'] = np.concatenate(support_neg['word'], 0)
