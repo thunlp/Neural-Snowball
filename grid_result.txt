@@ -1,1 +1,2 @@
 [EVAL] step: 1000 | [baseline] f1: 0.1974, prec: 11.97%, rec: 99.72%
+[EVAL] step: 1000 | [baseline] f1: 0.1739, prec: 10.52%, rec: 99.76%
