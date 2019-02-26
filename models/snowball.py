@@ -143,10 +143,10 @@ class Snowball(nrekit.framework.Model):
         self.weight_table = weight_table
         
         # snowball hyperparameter
-        self.parser.add_argument("--phase1_add_num", help="number of instances added in phase 1", type=int, default=10)
-        self.parser.add_argument("--phase2_add_num", help="number of instances added in phase 2", type=int, default=10)
-        self.parser.add_argument("--phase1_siamese_th", help="threshold of relation siamese network in phase 1", type=float, default=0.)
-        self.parser.add_argument("--phase2_siamese_th", help="threshold of relation siamese network in phase 2", type=float, default=0.)
+        self.parser.add_argument("--phase1_add_num", help="number of instances added in phase 1", type=int, default=5)
+        self.parser.add_argument("--phase2_add_num", help="number of instances added in phase 2", type=int, default=5)
+        self.parser.add_argument("--phase1_siamese_th", help="threshold of relation siamese network in phase 1", type=float, default=0.5)
+        self.parser.add_argument("--phase2_siamese_th", help="threshold of relation siamese network in phase 2", type=float, default=0.5)
         self.parser.add_argument("--phase2_cl_th", help="threshold of relation classifier in phase 2", type=float, default=0.9)
 
         self.parser.add_argument("--snowball_max_iter", help="number of iterations of snowball", type=int, default=5)

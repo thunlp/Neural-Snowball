@@ -398,7 +398,6 @@ class Framework:
 
         res = "[SNOWBALL ITER RESULT:]\n"
         for i in range(len(model._metric)):
-            snowball_metric[i] += model._metric[i]
             res += "iter {} : {}\n".format(i, snowball_metric[i] / iter_sample)
         res += "BASELINE: f1: {}, precision: {}, recall: {}".format(iter_bright / iter_sample, iter_bprec / iter_sample, iter_brecall / iter_sample) + "| SNOWBALL: f1: {}, precision: {}, recall: {}\n".format(iter_right / iter_sample, iter_prec / iter_sample, iter_recall / iter_sample)
         res += '--------\n\n'
