@@ -110,6 +110,8 @@ data
 *swp
 _processed_data
 _repre
+_repre_split
+_*
 checkpoint
 
 log

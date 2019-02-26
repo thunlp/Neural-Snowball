@@ -363,8 +363,9 @@ class Framework:
         iter_bprec = 0.0
         iter_brecall = 0.0
         snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32) ]
+        # for rel in ['P2094']:
         for rel in self.val_data_loader.rel2scope:
-            support_pos, support_neg, query, pos_class = eval_dataset.get_selected(self.train_data_loader, support_size, 10, query_size, query_class, main_class=rel, use_train_neg=False)
+            support_pos, support_neg, query, pos_class = eval_dataset.get_selected(self.train_data_loader, support_size, 10, query_size, query_class, main_class=rel, use_train_neg=True, neg_train_loader=self.neg_train_loader)
 
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
             model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold)
@@ -395,7 +396,13 @@ class Framework:
         print("BASELINE: f1: {}, precision: {}, recall: {}".format(iter_bright / iter_sample, iter_bprec / iter_sample, iter_brecall / iter_sample))
         print("SNOWBALL: f1: {}, precision: {}, recall: {}".format(iter_right / iter_sample, iter_prec / iter_sample, iter_recall / iter_sample))
 
-        return iter_right / iter_sample
+        res = "[SNOWBALL ITER RESULT:]\n"
+        for i in range(len(model._metric)):
+            snowball_metric[i] += model._metric[i]
+            res += "iter {} : {}\n".format(i, snowball_metric[i] / iter_sample)
+        res += "BASELINE: f1: {}, precision: {}, recall: {}".format(iter_bright / iter_sample, iter_bprec / iter_sample, iter_brecall / iter_sample) + "| SNOWBALL: f1: {}, precision: {}, recall: {}\n".format(iter_right / iter_sample, iter_prec / iter_sample, iter_recall / iter_sample)
+        res += '--------\n\n'
+        return res
 
     def eval_baseline(self,
             model,
@@ -434,7 +441,7 @@ class Framework:
         iter_brecall = 0.0
         snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32) ]
         for it in range(eval_iter):
-            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=False)
+            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=True, neg_train_loader=self.neg_train_loader)
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
             # model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold)
 
@@ -447,7 +454,8 @@ class Framework:
             sys.stdout.flush()
         
         print('')
-        return iter_right / iter_sample
+        return '[EVAL] step: {0:4} | [baseline] f1: {1:1.4f}, prec: {2:3.2f}%, rec: {3:3.2f}%'.format(it + 1, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample)
+       #  return iter_right / iter_sample
 
 
     def eval(self,
@@ -487,7 +495,7 @@ class Framework:
         iter_brecall = 0.0
         snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32) ]
         for it in range(eval_iter):
-            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=False)
+            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=True, neg_train_loader=self.neg_train_loader)
             model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
             model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold)
 
@@ -503,11 +511,67 @@ class Framework:
             sys.stdout.write('[EVAL] step: {0:4} | f1: {1:1.4f}, prec: {2:3.2f}%, recall: {3:3.2f}% | [baseline] f1: {4:1.4f}, prec: {5:3.2f}%, rec: {6:3.2f}%'.format(it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
             sys.stdout.flush()
             
+            # if model.args.print_debug:
             print("")
             print("[SNOWBALL ITER RESULT:]")
             for i in range(len(model._metric)):
                 snowball_metric[i] += model._metric[i]
                 print("iter {} : {}".format(i, snowball_metric[i] / iter_sample))
+        return iter_right / iter_sample
+
+    def eval_fewshot(self,
+            model,
+            support_size=5, query_size=50, unlabelled_size=50, query_class=5,
+            batch_size=100,
+            eval_iter=2000,
+            ckpt=None,
+            is_model2=False,
+            threshold=0.5):
+        '''
+        model: a FewShotREModel instance
+        B: Batch size
+        N: Num of classes for each batch
+        K: Num of instances for each class in the support set
+        Q: Num of instances for each class in the query set
+        eval_iter: Num of iterations
+        ckpt: Checkpoint path. Set as None if using current model parameters.
+        return: Accuracy
+        '''
+        print("")
+        # model.eval()
+        if ckpt is None:
+            eval_dataset = self.val_data_loader
+        else:
+            checkpoint = self.__load_model__(ckpt)
+            model.load_state_dict(checkpoint['state_dict'])
+            eval_dataset = self.test_data_loader
+        eval_distant_dataset = self.distant
+
+        iter_right = 0.0
+        iter_prec = 0.0
+        iter_recall = 0.0
+        iter_sample = 0.0
+        iter_bright = 0.0
+        iter_bprec = 0.0
+        iter_brecall = 0.0
+        # snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32) ]
+        for it in range(eval_iter):
+            support, query, label = self.next_fewshot_batch(B=batch_size, N=query_class, K=support_size, Q=query_size)
+            model.forward_few_shot_baseline(support, query, label, B=batch_size, N=query_class, K=support_size)
+            model.forward_few_shot(support, query, label, B=batch_size, N=query_class, K=support_size)
+
+            iter_bright += model._baseline_acc
+            iter_right += model._acc
+            
+            iter_sample += 1
+            sys.stdout.write('[EVAL] step: {0:4} | acc: {1:1.4f} | [baseline] acc: {2:1.4f}%'.format(it + 1, iter_right / iter_sample * 100, iter_bright / iter_sample * 100) +'\r')
+            sys.stdout.flush()
+            
+            # print("")
+            # print("[SNOWBALL ITER RESULT:]")
+            # for i in range(len(model._metric)):
+            #     snowball_metric[i] += model._metric[i]
+            #     print("iter {} : {}".format(i, snowball_metric[i] / iter_sample))
         return iter_right / iter_sample
 
 class SuperviseFramework:

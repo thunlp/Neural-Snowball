@@ -1,12 +1,18 @@
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.2 --finetune_epoch 30
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.2 --finetune_epoch 40
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.2 --finetune_epoch 50
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.1 --finetune_epoch 30
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.1 --finetune_epoch 40
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.1 --finetune_epoch 50
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.05 --finetune_epoch 30
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.05 --finetune_epoch 40
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.05 --finetune_epoch 50
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.01 --finetune_epoch 30
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.01 --finetune_epoch 40
-python binary_cnn_fewrel-test.py --finetune_batch_size 50 --finetune_lr 0.01 --finetune_epoch 50
+python binary_cnn_fewrel-test.py --phase1_add_num 10 --phase2_add_num 10 --phase1_siamese_th 0.0 --phase2_siamese_th 0.0 --phase2_cl_th 0.9 
+python binary_cnn_fewrel-test.py --phase1_add_num 10 --phase2_add_num 10 --phase1_siamese_th 0.5 --phase2_siamese_th 0.5 --phase2_cl_th 0.9 
+python binary_cnn_fewrel-test.py --phase1_add_num 10 --phase2_add_num 10 --phase1_siamese_th 0.9 --phase2_siamese_th 0.9 --phase2_cl_th 0.9 
+
+python binary_cnn_fewrel-test.py --phase1_add_num 10 --phase2_add_num 10 --phase1_siamese_th 0.0 --phase2_siamese_th 0.0 --phase2_cl_th 0.99
+python binary_cnn_fewrel-test.py --phase1_add_num 10 --phase2_add_num 10 --phase1_siamese_th 0.5 --phase2_siamese_th 0.5 --phase2_cl_th 0.99
+python binary_cnn_fewrel-test.py --phase1_add_num 10 --phase2_add_num 10 --phase1_siamese_th 0.9 --phase2_siamese_th 0.9 --phase2_cl_th 0.99
+
+# ------
+
+python binary_cnn_fewrel-test.py --phase1_add_num 5 --phase2_add_num 5 --phase1_siamese_th 0.0 --phase2_siamese_th 0.0 --phase2_cl_th 0.9 
+python binary_cnn_fewrel-test.py --phase1_add_num 5 --phase2_add_num 5 --phase1_siamese_th 0.5 --phase2_siamese_th 0.5 --phase2_cl_th 0.9 
+python binary_cnn_fewrel-test.py --phase1_add_num 5 --phase2_add_num 5 --phase1_siamese_th 0.9 --phase2_siamese_th 0.9 --phase2_cl_th 0.9 
+
+python binary_cnn_fewrel-test.py --phase1_add_num 5 --phase2_add_num 5 --phase1_siamese_th 0.0 --phase2_siamese_th 0.0 --phase2_cl_th 0.99
+python binary_cnn_fewrel-test.py --phase1_add_num 5 --phase2_add_num 5 --phase1_siamese_th 0.5 --phase2_siamese_th 0.5 --phase2_cl_th 0.99
+python binary_cnn_fewrel-test.py --phase1_add_num 5 --phase2_add_num 5 --phase1_siamese_th 0.9 --phase2_siamese_th 0.9 --phase2_cl_th 0.99
+
