@@ -12,7 +12,7 @@ import copy
 
 class Siamese(nn.Module):
 
-    def __init__(self, sentence_encoder, hidden_size=230, drop_rate=0.5):
+    def __init__(self, sentence_encoder, hidden_size=230, drop_rate=0.5, pre_rep=None, euc=True):
         nn.Module.__init__(self)
         self.sentence_encoder = sentence_encoder # Should be different from main sentence encoder
         self.hidden_size = hidden_size
@@ -22,6 +22,8 @@ class Siamese(nn.Module):
         self.cost = nn.BCELoss(reduction="none")
         self.drop = nn.Dropout(drop_rate)
         self._accuracy = 0.0
+        self.pre_rep = pre_rep
+        self.euc = euc
 
     def forward(self, data, num_size, num_class, threshold=0.5):
         x = self.sentence_encoder(data).contiguous().view(num_class, num_size, -1)
@@ -31,17 +33,25 @@ class Siamese(nn.Module):
         y2 = x[num_class//2:,:].contiguous().view(-1, self.hidden_size)
         # y1 = x[0].contiguous().unsqueeze(0).expand(x.size(0) - 1, -1, -1).contiguous().view(-1, self.hidden_size)
         # y2 = x[1:].contiguous().view(-1, self.hidden_size)
+
         label = torch.zeros((x1.size(0) + y1.size(0))).long().cuda()
         label[:x1.size(0)] = 1
         z1 = torch.cat([x1, y1], 0)
         z2 = torch.cat([x2, y2], 0)
-        z = z1 * z2
-        z = self.drop(z)
-        z = self.fc(z).squeeze()
-        # z = torch.cat([z1, z2], -1)
-        # z = F.relu(self.fc1(z))
-        # z = self.fc2(z).squeeze()
-        score = torch.sigmoid(z)
+
+        if self.euc:
+            dis = torch.pow(z1 - z2, 2)
+            dis = self.drop(dis)
+            score = torch.sigmoid(self.fc(dis).squeeze())
+        else:
+            z = z1 * z2
+            z = self.drop(z)
+            z = self.fc(z).squeeze()
+            # z = torch.cat([z1, z2], -1)
+            # z = F.relu(self.fc1(z))
+            # z = self.fc2(z).squeeze()
+            score = torch.sigmoid(z)
+
         self._loss = self.cost(score, label.float()).mean()
         pred = torch.zeros((score.size(0))).long().cuda()
         pred[score > threshold] = 1
@@ -52,6 +62,9 @@ class Siamese(nn.Module):
         self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
 
     def encode(self, dataset, batch_size=0): 
+        if self.pre_rep is not None:
+            return self.pre_rep[dataset['id'].view(-1)] 
+
         if batch_size == 0:
             x = self.sentence_encoder(dataset)
         else:
@@ -79,9 +92,13 @@ class Siamese(nn.Module):
         x = x.unsqueeze(1)
         y = y.unsqueeze(0)
 
-        z = x * y
-        z = self.fc(z).squeeze(-1)
-        score = torch.sigmoid(z).mean(0)
+        if self.euc:
+            dis = torch.pow(x - y, 2)
+            score = torch.sigmoid(self.fc(dis).squeeze(-1)).mean(0)
+        else:
+            z = x * y
+            z = self.fc(z).squeeze(-1)
+            score = torch.sigmoid(z).mean(0)
 
         pred = torch.zeros((score.size(0))).long().cuda()
         pred[score > threshold] = 1
@@ -97,9 +114,13 @@ class Siamese(nn.Module):
         x = x.unsqueeze(1)
         y = y.unsqueeze(0)
 
-        z = x * y
-        z = self.fc(z).squeeze(-1)
-        score = torch.sigmoid(z).mean(0)
+        if self.euc:
+            dis = torch.pow(x - y, 2)
+            score = torch.sigmoid(self.fc(dis).squeeze(-1)).mean(0)
+        else:
+            z = x * y
+            z = self.fc(z).squeeze(-1)
+            score = torch.sigmoid(z).mean(0)
 
         pred = []
         for i in range(score.size(0)):
@@ -109,7 +130,7 @@ class Siamese(nn.Module):
 
 class Snowball(nrekit.framework.Model):
     
-    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230, drop_rate=0.5, weight_table=None):
+    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230, drop_rate=0.5, weight_table=None, pre_rep=None, neg_loader=None):
         nrekit.framework.Model.__init__(self, sentence_encoder)
         self.hidden_size = hidden_size
         self.base_class = base_class
@@ -131,15 +152,21 @@ class Snowball(nrekit.framework.Model):
         self.parser.add_argument("--snowball_max_iter", help="number of iterations of snowball", type=int, default=5)
 
         # fine-tune hyperparameter
-        self.parser.add_argument("--finetune_epoch", help="num of epochs when finetune", type=int, default=20)
-        self.parser.add_argument("--finetune_batch_size", help="batch size when finetune", type=int, default=50)
-        self.parser.add_argument("--finetune_lr", help="learning rate when finetune", type=float, default=0.1)
+        self.parser.add_argument("--finetune_epoch", help="num of epochs when finetune", type=int, default=50)
+        self.parser.add_argument("--finetune_batch_size", help="batch size when finetune", type=int, default=10)
+        self.parser.add_argument("--finetune_lr", help="learning rate when finetune", type=float, default=0.05)
         self.parser.add_argument("--finetune_wd", help="weight decay rate when finetune", type=float, default=1e-5)
         
         # inference batch_size
         self.parser.add_argument("--infer_batch_size", help="batch size when inference", type=int, default=0)
 
+        # print
+        self.parser.add_argument("--print_debug", help="print debug information", action="store_true")
+
         self.args = self.parser.parse_args()
+
+        self.pre_rep = pre_rep
+        self.neg_loader = neg_loader
 
     # def __loss__(self, logits, label):
     #     onehot_label = torch.zeros(logits.size()).cuda()
@@ -189,8 +216,11 @@ class Snowball(nrekit.framework.Model):
         
         # train
         self._train_finetune_init()
-        support_rep = self.encode(support, self.args.infer_batch_size)
-        self._train_finetune(support_rep, support['label'])
+        # support_rep = self.encode(support, self.args.infer_batch_size)
+        support_pos_rep = self.encode(support_pos, self.args.infer_batch_size)
+        # self._train_finetune(support_rep, support['label'])
+        self._train_finetune(support_pos_rep, support['label'])
+
         
         # test
         query_prob = self._infer(query, batch_size=self.args.infer_batch_size).cpu().detach().numpy()
@@ -206,10 +236,61 @@ class Snowball(nrekit.framework.Model):
         else:
             self._baseline_f1 = float(2.0 * self._baseline_prec * self._baseline_recall) / float(self._baseline_prec + self._baseline_recall)
         self._baseline_auc = sklearn.metrics.roc_auc_score(label, query_prob)
-        print('')
-        sys.stdout.write('[BASELINE EVAL] acc: {0:2.2f}%, prec: {1:2.2f}%, rec: {2:2.2f}%, f1: {3:1.3f}, auc: {4:1.3f}'.format( \
-            self._baseline_accuracy * 100, self._baseline_prec * 100, self._baseline_recall * 100, self._baseline_f1, self._baseline_auc))
-        print('')
+        if self.args.print_debug:
+            print('')
+            sys.stdout.write('[BASELINE EVAL] acc: {0:2.2f}%, prec: {1:2.2f}%, rec: {2:2.2f}%, f1: {3:1.3f}, auc: {4:1.3f}'.format( \
+                self._baseline_accuracy * 100, self._baseline_prec * 100, self._baseline_recall * 100, self._baseline_f1, self._baseline_auc))
+            print('')
+
+    def __dist__(self, x, y, dim):
+        return (torch.pow(x - y, 2)).sum(dim)
+
+    def __batch_dist__(self, S, Q):
+        return self.__dist__(S.unsqueeze(1), Q.unsqueeze(2), 3)
+
+    def forward_few_shot_baseline(self, support, query, label, B, N, K, Q):
+        support_rep = self.encode(support, self.args.infer_batch_size)
+        query_rep = self.encode(query, self.args.infer_batch_size)
+        support_rep.view(B, N, K, -1)
+        query_rep.view(B, N * Q, -1)
+        
+        NQ = N * Q
+         
+        # Prototypical Networks 
+        proto = torch.mean(support_rep, 2) # Calculate prototype for each class
+        logits = -self.__batch_dist__(proto, query)
+        _, pred = torch.max(logits.view(-1, N), 1)
+
+        self._accuracy = self.__accuracy__(pred.view(-1), label.view(-1))
+
+        return logits, pred
+
+#    def forward_few_shot(self, support, query, label, B, N, K, Q):
+#        for b in range(B):
+#            for n in range(N):
+#                _forward_train(self, support_pos, None, query, distant, threshold=0.5):
+#
+#        '''
+#        support_rep = self.encode(support, self.args.infer_batch_size)
+#        query_rep = self.encode(query, self.args.infer_batch_size)
+#        support_rep.view(B, N, K, -1)
+#        query_rep.view(B, N * Q, -1)
+#        '''
+#        
+#        proto = []
+#        for b in range(B):
+#            for N in range(N)
+#        
+#        NQ = N * Q
+#         
+#        # Prototypical Networks 
+#        proto = torch.mean(support_rep, 2) # Calculate prototype for each class
+#        logits = -self.__batch_dist__(proto, query)
+#        _, pred = torch.max(logits.view(-1, N), 1)
+#
+#        self._accuracy = self.__accuracy__(pred.view(-1), label.view(-1))
+#
+#        return logits, pred
 
     def _train_finetune_init(self):
         # init variables and optimizer
@@ -238,7 +319,8 @@ class Snowball(nrekit.framework.Model):
         data_repre = self.drop(data_repre) 
         
         # train
-        print('')
+        if self.args.print_debug:
+            print('')
         for epoch in range(max_epoch):
             max_iter = data_repre.size(0) // batch_size
             if data_repre.size(0) % batch_size != 0:
@@ -247,15 +329,32 @@ class Snowball(nrekit.framework.Model):
             random.shuffle(order)
             for i in range(max_iter):            
                 x = data_repre[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
-                batch_label = label[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
+                # batch_label = label[order[i * batch_size : min((i + 1) * batch_size, data_repre.size(0))]]
+                
+                # neg sampling
+                # ---------------------
+                batch_label = torch.ones((x.size(0))).long().cuda()
+                neg_size = int(x.size(0) * 1)
+                neg = self.neg_loader.next_batch(neg_size)
+                neg = self.encode(neg, self.args.infer_batch_size)
+                x = torch.cat([x, neg], 0)
+                batch_label = torch.cat([batch_label, torch.zeros((neg_size)).long().cuda()], 0)
+                # ---------------------
+
                 x = torch.matmul(x, self.new_W) + self.new_bias # (batch_size, 1)
                 x = torch.sigmoid(x)
-                iter_loss = self.__loss__(x, batch_label.float()).mean()
+
+                # iter_loss = self.__loss__(x, batch_label.float()).mean()
+                weight = torch.ones(batch_label.size(0)).float().cuda()
+                weight[batch_label == 0] = 1 / float(max_epoch)
+                iter_loss = (self.__loss__(x, batch_label.float()) * weight).mean()
+
                 optimizer.zero_grad()
                 iter_loss.backward(retain_graph=True)
                 optimizer.step()
-                sys.stdout.write('[snowball finetune] epoch {0:4} iter {1:4} | loss: {2:2.6f}'.format(epoch, i, iter_loss) + '\r')
-                sys.stdout.flush()
+                if self.args.print_debug:
+                    sys.stdout.write('[snowball finetune] epoch {0:4} iter {1:4} | loss: {2:2.6f}'.format(epoch, i, iter_loss) + '\r')
+                    sys.stdout.flush()
 
     def _add_ins_to_data(self, dataset_dst, dataset_src, ins_id, label=None):
         '''
@@ -289,7 +388,7 @@ class Snowball(nrekit.framework.Model):
             dataset_dst['pos2'] = torch.cat([dataset_dst['pos2'], dataset_src['pos2'][ins_id].unsqueeze(0)], 0)
         dataset_dst['mask'] = torch.cat([dataset_dst['mask'], dataset_src['mask'][ins_id].unsqueeze(0)], 0)
         if 'id' in dataset_dst and 'id' in dataset_src:
-            dataset_dst['id'].append(dataset_src['id'][ins_id])
+            dataset_dst['id'] = torch.cat([dataset_dst['id'], dataset_src['id'][ins_id].unsqueeze(0)], 0)
         if 'entpair' in dataset_dst and 'entpair' in dataset_src:
             dataset_dst['entpair'].append(dataset_src['entpair'][ins_id])
         if 'label' in dataset_dst and label is not None:
@@ -307,8 +406,12 @@ class Snowball(nrekit.framework.Model):
             dataset['pos1'] = torch.stack(dataset['pos1'], 0).cuda()
             dataset['pos2'] = torch.stack(dataset['pos2'], 0).cuda()
         dataset['mask'] = torch.stack(dataset['mask'], 0).cuda()
+        dataset['id'] = torch.stack(dataset['id'], 0).cuda()
 
     def encode(self, dataset, batch_size=0):
+        if self.pre_rep is not None:
+            return self.pre_rep[dataset['id'].view(-1)]
+
         if batch_size == 0:
             x = self.sentence_encoder(dataset)
         else:
@@ -369,6 +472,11 @@ class Snowball(nrekit.framework.Model):
         
         # init
         self._train_finetune_init()
+        # support_rep = self.encode(support, self.args.infer_batch_size)
+        support_pos_rep = self.encode(support_pos, self.args.infer_batch_size)
+        # self._train_finetune(support_rep, support['label'])
+        self._train_finetune(support_pos_rep, support_pos['label'])
+
         self._metric = []
 
         # copy
@@ -376,9 +484,11 @@ class Snowball(nrekit.framework.Model):
 
         # snowball
         exist_id = {}
-        print('\n-------------------------------------------------------')
+        if self.args.print_debug:
+            print('\n-------------------------------------------------------')
         for snowball_iter in range(snowball_max_iter):
-            print('###### snowball iter ' + str(snowball_iter))
+            if self.args.print_debug:
+                print('###### snowball iter ' + str(snowball_iter))
             # phase 1: expand positive support set from distant dataset (with same entity pairs)
 
             ## get all entpairs and their ins in positive support set
@@ -390,9 +500,9 @@ class Snowball(nrekit.framework.Model):
                 exist_id[support_pos['id'][i]] = 1
                 if entpair not in entpair_support:
                     if 'pos1' in support_pos:
-                        entpair_support[entpair] = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+                        entpair_support[entpair] = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': []}
                     else:
-                        entpair_support[entpair] = {'word': [], 'mask': []}
+                        entpair_support[entpair] = {'word': [], 'mask': [], 'id': []}
                 self._add_ins_to_data(entpair_support[entpair], support_pos, i)
             
             ## pick all ins with the same entpairs in distant data and choose with siamese network
@@ -413,7 +523,10 @@ class Snowball(nrekit.framework.Model):
                 self._dataset_stack_and_cuda(entpair_distant[entpair])
                 if len(entpair_support[entpair]['word']) == 0 or len(entpair_distant[entpair]['word']) == 0:
                     continue
+
+                
                 pick_or_not = self.siamese_model.forward_infer_sort(entpair_support[entpair], entpair_distant[entpair], batch_size=self.args.infer_batch_size)
+                
                 # pick_or_not = self.siamese_model.forward_infer_sort(original_support_pos, entpair_distant[entpair], threshold=threshold_for_phase1)
                 # pick_or_not = self._infer(entpair_distant[entpair]) > threshold
       
@@ -454,17 +567,28 @@ class Snowball(nrekit.framework.Model):
                 self._phase1_total += candidate['word'].size(0)
             '''
             ## build new support set
+            
+            # print('---')
+            # for i in range(len(support_pos['entpair'])):
+            #     print(support_pos['entpair'][i])
+            # print('---')
+            # print('---')
+            # for i in range(support_pos['id'].size(0)):
+            #     print(support_pos['id'][i])
+            # print('---')
+
             support_pos_rep = self.encode(support_pos, batch_size=self.args.infer_batch_size)
             support_rep = torch.cat([support_pos_rep, support_neg_rep], 0)
             support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
             
             ## finetune
             # print("Fine-tune Init")
-            # self._train_finetune_init()
-            self._train_finetune(support_rep, support_label)
+            self._train_finetune_init()
+            self._train_finetune(support_pos_rep, support_label)
             self._forward_eval_binary(query, threshold)
             # self._metric.append(np.array([self._f1, self._prec, self._recall]))
-            print('\nphase1 add {} ins / {}'.format(self._phase1_add_num, self._phase1_total))
+            if self.args.print_debug:
+                print('\nphase1 add {} ins / {}'.format(self._phase1_add_num, self._phase1_total))
 
             # phase 2: use the new classifier to pick more extended support ins
             self._phase2_add_num = 0
@@ -473,6 +597,7 @@ class Snowball(nrekit.framework.Model):
             ## -- method 1: directly use the classifier --
             candidate_prob = self._infer(candidate, batch_size=self.args.infer_batch_size)
             ## -- method 2: use siamese network --
+
             pick_or_not = self.siamese_model.forward_infer_sort(support_pos, candidate, batch_size=self.args.infer_batch_size)
 
             ## -- method A: use threshold --
@@ -502,11 +627,14 @@ class Snowball(nrekit.framework.Model):
 
             ## finetune
             # print("Fine-tune Init")
-            # self._train_finetune_init()
-            self._train_finetune(support_rep, support_label)
+            self._train_finetune_init()
+            self._train_finetune(support_pos_rep, support_label)
             self._forward_eval_binary(query, threshold)
             self._metric.append(np.array([self._f1, self._prec, self._recall]))
-            print('\nphase2 add {} ins / {}'.format(self._phase2_add_num, self._phase2_total))
+            if self.args.print_debug:
+                print('\nphase2 add {} ins / {}'.format(self._phase2_add_num, self._phase2_total))
+
+        return support_pos_rep
 
     def _forward_eval_binary(self, query, threshold=0.5):
         '''
@@ -528,10 +656,11 @@ class Snowball(nrekit.framework.Model):
         else:
             f1 = float(2.0 * precision * recall) / float(precision + recall)
         auc = sklearn.metrics.roc_auc_score(label, query_prob)
-        print('')
-        sys.stdout.write('[EVAL] acc: {0:2.2f}%, prec: {1:2.2f}%, rec: {2:2.2f}%, f1: {3:1.3f}, auc: {4:1.3f}'.format(\
-                accuracy * 100, precision * 100, recall * 100, f1, auc) + '\r')
-        sys.stdout.flush()
+        if self.args.print_debug:
+            print('')
+            sys.stdout.write('[EVAL] acc: {0:2.2f}%, prec: {1:2.2f}%, rec: {2:2.2f}%, f1: {3:1.3f}, auc: {4:1.3f}'.format(\
+                    accuracy * 100, precision * 100, recall * 100, f1, auc) + '\r')
+            sys.stdout.flush()
         self._accuracy = accuracy
         self._prec = precision
         self._recall = recall
