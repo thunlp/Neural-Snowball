@@ -46,10 +46,10 @@ encoder.load_state_dict(ckpt_encoder)
 encoder.cuda()
 encoder.eval()
 
-for data_loader, name in [(train_train_data_loader, 'train_train'), (train_val_data_loader, 'train_val'), (val_data_loader, 'val'), (test_data_loader, 'test'), (distant, 'distant')]:
-    get_repre(encoder, data_loader, './_repre/' + 'bert_encoder_on_fewrel.' + name + '.npy')
+# for data_loader, name in [(train_train_data_loader, 'train_train'), (train_val_data_loader, 'train_val'), (val_data_loader, 'val'), (test_data_loader, 'test'), (distant, 'distant')]:
+#     get_repre(encoder, data_loader, './_repre/' + 'bert_encoder_on_fewrel.' + name + '.npy')
 
-siamese = nrekit.sentence_encoder.CNNSentenceEncoder(train_train_data_loader.word_vec_mat, max_length)
+siamese = nrekit.sentence_encoder.BERTSentenceEncoder('./data/bert-base-uncased')
 ckpt_siamese = {}
 for name, param in torch.load('./checkpoint/bert_siamese_on_fewrel.pth.tar.bak')['state_dict'].items():
     if 'sentence_encoder' in name:

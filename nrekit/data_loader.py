@@ -20,6 +20,7 @@ class FileDataLoader:
 class JSONFileDataLoader(FileDataLoader):
     def _load_preprocessed_file(self): 
         name_prefix = '.'.join(self.file_name.split('/')[-1].split('.')[:-1])
+        self.uid = np.load('./data/' + name_prefix + '_uid.npy')
         word_vec_name_prefix = '.'.join(self.word_vec_file_name.split('/')[-1].split('.')[:-1])
         processed_data_dir = '_processed_data'
         if not os.path.isdir(processed_data_dir):
@@ -267,7 +268,7 @@ class JSONFileDataLoader(FileDataLoader):
                 random.shuffle(self.index)
             self.current = 0
             return None
-        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': []}
         if self.current + batch_size > len(self.index):
             batch_size = len(self.index) - self.current
         current_index = self.index[self.current:self.current+batch_size]
@@ -278,6 +279,7 @@ class JSONFileDataLoader(FileDataLoader):
         batch['pos2'] = Variable(torch.from_numpy(self.data_pos2[current_index]).long())
         batch['mask'] = Variable(torch.from_numpy(self.data_mask[current_index]).long())
         batch['label']= Variable(torch.from_numpy(self.data_label[current_index]).long())
+        batch['id'] = Variable(torch.from_numpy(self.uid[current_index]).long())
 
         # To cuda
         if self.cuda:
@@ -287,7 +289,7 @@ class JSONFileDataLoader(FileDataLoader):
         return batch
 
     def next_batch(self, batch_size):
-        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': []}
         if self.current + batch_size > len(self.index):
             self.index = list(range(self.instance_tot))
             if self.shuffle:
@@ -300,6 +302,7 @@ class JSONFileDataLoader(FileDataLoader):
         batch['pos1'] = Variable(torch.from_numpy(self.data_pos1[current_index]).long())
         batch['pos2'] = Variable(torch.from_numpy(self.data_pos2[current_index]).long())
         batch['mask'] = Variable(torch.from_numpy(self.data_mask[current_index]).long())
+        batch['id'] = Variable(torch.from_numpy(self.uid[current_index]).long())
         batch['label']= Variable(torch.from_numpy(self.data_label[current_index]).long())
 
         # To cuda
@@ -308,169 +311,6 @@ class JSONFileDataLoader(FileDataLoader):
                 batch[key] = batch[key].cuda()
 
         return batch
-
-    def next_support(self, support_size):
-        support = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
-        for i in range(self.rel_tot):
-            scope = self.rel2scope[self.id2rel[i]]
-            indices = np.random.choice(list(range(scope[0], scope[1])), support_size, False)
-            support['word'].append(self.data_word[indices])
-            support['pos1'].append(self.data_pos1[indices])
-            support['pos2'].append(self.data_pos2[indices])
-            support['mask'].append(self.data_mask[indices])
-
-        support['word'] = np.concatenate(support['word'], 0)
-        support['pos1'] = np.concatenate(support['pos1'], 0)
-        support['pos2'] = np.concatenate(support['pos2'], 0)
-        support['mask'] = np.concatenate(support['mask'], 0)
-
-        support['word'] = Variable(torch.from_numpy(support['word']).long()) 
-        support['pos1'] = Variable(torch.from_numpy(support['pos1']).long())
-        support['pos2'] = Variable(torch.from_numpy(support['pos2']).long())
-        support['mask'] = Variable(torch.from_numpy(support['mask']).long())
-
-        # To cuda
-        if self.cuda:
-            for key in support:
-                support[key] = support[key].cuda()
-
-        return support
-
-
-    def next_multi_class(self, num_size, num_class):
-        '''
-        num_size: The num of instances for ONE class. The total size is num_size * num_classes.
-        num_class: The num of classes (include the positive class).
-        '''
-        target_classes = random.sample(self.rel2scope.keys(), num_class)
-        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
-
-        for i, class_name in enumerate(target_classes):
-            scope = self.rel2scope[class_name]
-            indices = np.random.choice(list(range(scope[0], scope[1])), num_size, False)
-            batch['word'].append(self.data_word[indices])
-            batch['pos1'].append(self.data_pos1[indices])
-            batch['pos2'].append(self.data_pos2[indices])
-            batch['mask'].append(self.data_mask[indices])
-
-        batch['word'] = np.concatenate(batch['word'], 0)
-        batch['pos1'] = np.concatenate(batch['pos1'], 0)
-        batch['pos2'] = np.concatenate(batch['pos2'], 0)
-        batch['mask'] = np.concatenate(batch['mask'], 0)
-
-        batch['word'] = Variable(torch.from_numpy(batch['word']).long()) 
-        batch['pos1'] = Variable(torch.from_numpy(batch['pos1']).long())
-        batch['pos2'] = Variable(torch.from_numpy(batch['pos2']).long())
-        batch['mask'] = Variable(torch.from_numpy(batch['mask']).long())
-
-        # To cuda
-        if self.cuda:
-            for key in batch:
-                batch[key] = batch[key].cuda()
-
-        return batch
-
-    def next_new_relation(self, train_data_loader, support_size, query_size, unlabelled_size, query_class, negative_rate=5, use_train_neg=False):
-        '''
-        support_size: The num of instances for positive / negative. The total support size is support_size * 2.
-        query_size: The num of instances for ONE class in query set. The total query size is query_size * query_class.
-        query_class: The num of classes in query (include the positive class).
-        '''
-        target_classes = random.sample(self.rel2scope.keys(), query_class) # 0 class is the new relation 
-        support_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
-        query_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'label': []}
-        unlabelled_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
-
-        # New relation
-        scope = self.rel2scope[target_classes[0]]
-        indices = np.random.choice(list(range(scope[0], scope[1])), support_size + query_size + unlabelled_size, False)
-        support_word, query_word, unlabelled_word, _ = np.split(self.data_word[indices], [support_size, support_size + query_size, support_size + query_size + unlabelled_size])
-        support_pos1, query_pos1, unlabelled_pos1, _ = np.split(self.data_pos1[indices], [support_size, support_size + query_size, support_size + query_size + unlabelled_size])
-        support_pos2, query_pos2, unlabelled_pos2, _ = np.split(self.data_pos2[indices], [support_size, support_size + query_size, support_size + query_size + unlabelled_size])
-        support_mask, query_mask, unlabelled_mask, _ = np.split(self.data_mask[indices], [support_size, support_size + query_size, support_size + query_size + unlabelled_size])
-
-        negative_support = train_data_loader.next_batch(support_size * negative_rate)
-        support_set['word'] = np.concatenate((support_word, negative_support['word']), 0)
-        support_set['pos1'] = np.concatenate((support_pos1, negative_support['pos1']), 0)
-        support_set['pos2'] = np.concatenate((support_pos2, negative_support['pos2']), 0)
-        support_set['mask'] = np.concatenate((support_mask, negative_support['mask']), 0)
-        support_set['label'] = np.concatenate((np.ones((support_size), dtype=np.int32), np.zeros((negative_rate * support_size), dtype=np.int32)), 0)
-
-        query_set['word'].append(query_word)
-        query_set['pos1'].append(query_pos1) 
-        query_set['pos2'].append(query_pos2)
-        query_set['mask'].append(query_mask)
-        query_set['label'] += [1] * query_size
-
-        unlabelled_set['word'].append(unlabelled_word)
-        unlabelled_set['pos1'].append(unlabelled_pos1) 
-        unlabelled_set['pos2'].append(unlabelled_pos2)
-        unlabelled_set['mask'].append(unlabelled_mask)
-
-        # Other query classes (negative)
-        if use_train_neg:
-            neg_loader = train_data_loader
-            target_classes = random.sample(neg_loader.rel2scope.keys(), query_class) # discard 0 class 
-        else:
-            neg_loader = self
-
-        for i, class_name in enumerate(target_classes[1:]):
-            scope = neg_loader.rel2scope[class_name]
-            indices = np.random.choice(list(range(scope[0], scope[1])), query_size + unlabelled_size, False)
-            query_word, unlabelled_word, _ = np.split(neg_loader.data_word[indices], [query_size, query_size + unlabelled_size])  
-            query_pos1, unlabelled_pos1, _ = np.split(neg_loader.data_pos1[indices], [query_size, query_size + unlabelled_size])    
-            query_pos2, unlabelled_pos2, _ = np.split(neg_loader.data_pos2[indices], [query_size, query_size + unlabelled_size])    
-            query_mask, unlabelled_mask, _ = np.split(neg_loader.data_mask[indices], [query_size, query_size + unlabelled_size])    
-
-            query_set['word'].append(query_word)
-            query_set['pos1'].append(query_pos1)
-            query_set['pos2'].append(query_pos2)
-            query_set['mask'].append(query_mask)
-            query_set['label'] += [0] * query_size
-
-            unlabelled_set['word'].append(unlabelled_word)
-            unlabelled_set['pos1'].append(unlabelled_pos1)
-            unlabelled_set['pos2'].append(unlabelled_pos2)
-            unlabelled_set['mask'].append(unlabelled_mask)
-
-        query_set['word'] = np.concatenate(query_set['word'], 0)
-        query_set['pos1'] = np.concatenate(query_set['pos1'], 0)
-        query_set['pos2'] = np.concatenate(query_set['pos2'], 0)
-        query_set['mask'] = np.concatenate(query_set['mask'], 0)
-        query_set['label'] = np.array(query_set['label'])
-
-        unlabelled_set['word'] = np.concatenate(unlabelled_set['word'], 0)
-        unlabelled_set['pos1'] = np.concatenate(unlabelled_set['pos1'], 0)
-        unlabelled_set['pos2'] = np.concatenate(unlabelled_set['pos2'], 0)
-        unlabelled_set['mask'] = np.concatenate(unlabelled_set['mask'], 0)
-
-        support_set['word'] = Variable(torch.from_numpy(support_set['word']).long()) 
-        support_set['pos1'] = Variable(torch.from_numpy(support_set['pos1']).long())
-        support_set['pos2'] = Variable(torch.from_numpy(support_set['pos2']).long())
-        support_set['mask'] = Variable(torch.from_numpy(support_set['mask']).long())
-        support_set['label'] = Variable(torch.from_numpy(support_set['label']).long())
-
-        query_set['word'] = Variable(torch.from_numpy(query_set['word']).long()) 
-        query_set['pos1'] = Variable(torch.from_numpy(query_set['pos1']).long())
-        query_set['pos2'] = Variable(torch.from_numpy(query_set['pos2']).long())
-        query_set['mask'] = Variable(torch.from_numpy(query_set['mask']).long())
-        query_set['label'] = Variable(torch.from_numpy(query_set['label']).long())
-
-        unlabelled_set['word'] = Variable(torch.from_numpy(unlabelled_set['word']).long()) 
-        unlabelled_set['pos1'] = Variable(torch.from_numpy(unlabelled_set['pos1']).long())
-        unlabelled_set['pos2'] = Variable(torch.from_numpy(unlabelled_set['pos2']).long())
-        unlabelled_set['mask'] = Variable(torch.from_numpy(unlabelled_set['mask']).long())
- 
-        # To cuda
-        if self.cuda:
-            for key in support_set:
-                support_set[key] = support_set[key].cuda()
-            for key in query_set:
-                query_set[key] = query_set[key].cuda()
-            for key in unlabelled_set:
-                unlabelled_set[key] = unlabelled_set[key].cuda()
-
-        return support_set, query_set, unlabelled_set
 
     def get_same_entpair_ins(self, entpair):
         '''
@@ -486,12 +326,12 @@ class JSONFileDataLoader(FileDataLoader):
         batch['pos2'] = Variable(torch.from_numpy(self.data_pos2[scope]).long())
         batch['mask'] = Variable(torch.from_numpy(self.data_mask[scope]).long())
         batch['label']= Variable(torch.from_numpy(self.data_label[scope]).long())
-        batch['id']   = scope
+        batch['id'] = Variable(torch.from_numpy(self.uid[scope]).long())
         batch['entpair'] = [entpair] * len(scope)
 
         # To cuda
         if self.cuda:
-            for key in ['word', 'pos1', 'pos2', 'mask']:
+            for key in ['word', 'pos1', 'pos2', 'mask', 'id']:
                 batch[key] = batch[key].cuda()
 
         return batch
@@ -517,22 +357,24 @@ class JSONFileDataLoader(FileDataLoader):
             candidate['pos1'].append(self.data_pos1[indices])
             candidate['pos2'].append(self.data_pos2[indices])
             candidate['mask'].append(self.data_mask[indices])
-            candidate['id'] += list(indices)
+            candidate['id'].append(self.uid[indices])
             candidate['entpair'] += list(self.data_entpair[indices])
 
         candidate['word'] = np.concatenate(candidate['word'], 0)
         candidate['pos1'] = np.concatenate(candidate['pos1'], 0)
         candidate['pos2'] = np.concatenate(candidate['pos2'], 0)
         candidate['mask'] = np.concatenate(candidate['mask'], 0)
+        candidate['id'] = np.concatenate(candidate['id'], 0)
 
         candidate['word'] = Variable(torch.from_numpy(candidate['word']).long()) 
         candidate['pos1'] = Variable(torch.from_numpy(candidate['pos1']).long())
         candidate['pos2'] = Variable(torch.from_numpy(candidate['pos2']).long())
         candidate['mask'] = Variable(torch.from_numpy(candidate['mask']).long())
+        candidate['id'] = Variable(torch.from_numpy(candidate['id']).long())
 
         # To cuda
         if self.cuda:
-            for key in ['word', 'pos1', 'pos2', 'mask']:
+            for key in ['word', 'pos1', 'pos2', 'mask', 'id']:
                 candidate[key] = candidate[key].cuda()
 
         return candidate
@@ -550,7 +392,7 @@ class JSONFileDataLoader(FileDataLoader):
         target_classes = random.sample(self.rel2scope.keys(), query_class) # 0 class is the new relation 
         support_pos = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': []}
         support_neg = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': []}
-        query = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'label': []}
+        query = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'label': []}
 
         # New relation
         scope = self.rel2scope[target_classes[0]]
@@ -559,7 +401,7 @@ class JSONFileDataLoader(FileDataLoader):
         support_pos1, query_pos1, _ = np.split(self.data_pos1[indices], [support_pos_size, support_pos_size + query_size])
         support_pos2, query_pos2, _ = np.split(self.data_pos2[indices], [support_pos_size, support_pos_size + query_size])
         support_mask, query_mask, _ = np.split(self.data_mask[indices], [support_pos_size, support_pos_size + query_size])
-        support_id = list(indices[:support_pos_size])
+        support_id, query_id, _ = np.split(self.uid[indices], [support_pos_size, support_pos_size + query_size])
         support_entpair = list(self.data_entpair[indices[:support_pos_size]])
         
         if neg_train_loader is None:
@@ -579,6 +421,7 @@ class JSONFileDataLoader(FileDataLoader):
         query['pos1'].append(query_pos1) 
         query['pos2'].append(query_pos2)
         query['mask'].append(query_mask)
+        query['id'].append(query_id)
         query['label'] += [1] * query_size
 
         # Other query classes (negative)
@@ -595,172 +438,41 @@ class JSONFileDataLoader(FileDataLoader):
             query['pos1'].append(neg_loader.data_pos1[indices])    
             query['pos2'].append(neg_loader.data_pos2[indices])    
             query['mask'].append(neg_loader.data_mask[indices])
+            query['id'].append(neg_loader.uid[indices])
             query['label'] += [0] * query_size
 
         query['word'] = np.concatenate(query['word'], 0)
         query['pos1'] = np.concatenate(query['pos1'], 0)
         query['pos2'] = np.concatenate(query['pos2'], 0)
         query['mask'] = np.concatenate(query['mask'], 0)
+        query['id'] = np.concatenate(query['id'], 0)
         query['label'] = np.array(query['label'])
 
         support_pos['word'] = Variable(torch.from_numpy(support_pos['word']).long()) 
         support_pos['pos1'] = Variable(torch.from_numpy(support_pos['pos1']).long())
         support_pos['pos2'] = Variable(torch.from_numpy(support_pos['pos2']).long())
         support_pos['mask'] = Variable(torch.from_numpy(support_pos['mask']).long())
+        support_pos['id'] = Variable(torch.from_numpy(support_pos['id']).long())
         support_pos['label'] = Variable(torch.from_numpy(support_pos['label']).long())
+
         support_neg['label'] = Variable(torch.from_numpy(support_neg['label']).long())
 
         query['word'] = Variable(torch.from_numpy(query['word']).long()) 
         query['pos1'] = Variable(torch.from_numpy(query['pos1']).long())
         query['pos2'] = Variable(torch.from_numpy(query['pos2']).long())
         query['mask'] = Variable(torch.from_numpy(query['mask']).long())
+        query['id'] = Variable(torch.from_numpy(query['id']).long())
         query['label'] = Variable(torch.from_numpy(query['label']).long())
 
         # To cuda
         if self.cuda:
-            for key in ['word', 'pos1', 'pos2', 'mask', 'label']:
+            for key in ['word', 'pos1', 'pos2', 'mask', 'label', 'id']:
                 support_pos[key] = support_pos[key].cuda()
-            for key in ['word', 'pos1', 'pos2', 'mask', 'label']:
+                support_neg[key] = support_neg[key].cuda()
                 query[key] = query[key].cuda()
             support_neg[key] = support_neg[key].cuda()
 
         return support_pos, support_neg, query, target_classes[0]
-
-    def get_all(self, rel):
-        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
-        current_index = list(range(self.rel2scope[rel][0], self.rel2scope[rel][1]))
-        batch['word'] = Variable(torch.from_numpy(self.data_word[current_index]).long()) 
-        batch['pos1'] = Variable(torch.from_numpy(self.data_pos1[current_index]).long())
-        batch['pos2'] = Variable(torch.from_numpy(self.data_pos2[current_index]).long())
-        batch['mask'] = Variable(torch.from_numpy(self.data_mask[current_index]).long())
-        batch['label']= Variable(torch.from_numpy(self.data_label[current_index]).long())
-
-        # To cuda
-        if self.cuda:
-            for key in batch:
-                batch[key] = batch[key].cuda()
-
-        return batch
-
-    def get_10shot_query(self, target_class, iid):
-        '''
-        get data for one new relation
-        train_data_loader: training data loader
-        support_pos_size: num of ins of ONE new relation in support set
-        support_neg_rate: num of neg ins in support is support_neg_rate times as pos
-        query_size: num of ins for EACH class in query set
-        query_class: num of classes in query set
-        return: support_pos, support_neg, query, name_of_pos_class
-        '''
-        query = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'label': []}
-
-        scope = self.rel2scope[target_class]
-        indices = list(range(scope[0], scope[1]))
-        query['word'] = self.data_word[indices]
-        query['pos1'] = self.data_pos1[indices]    
-        query['pos2'] = self.data_pos2[indices]    
-        query['mask'] = self.data_mask[indices]
-        query['label'] = [iid] * query['word'].shape[0]
-        query['label'] = np.array(query['label'])
-
-        query['word'] = Variable(torch.from_numpy(query['word']).long()) 
-        query['pos1'] = Variable(torch.from_numpy(query['pos1']).long())
-        query['pos2'] = Variable(torch.from_numpy(query['pos2']).long())
-        query['mask'] = Variable(torch.from_numpy(query['mask']).long())
-        query['label'] = Variable(torch.from_numpy(query['label']).long())
-
-        # To cuda
-        if self.cuda:
-            for key in ['word', 'pos1', 'pos2', 'mask', 'label']:
-                query[key] = query[key].cuda()
-
-        return query
-
-    def get_all_new_relation10shot(self, target_class, query_data_loader, query_size):
-        '''
-        get data for one new relation
-        train_data_loader: training data loader
-        support_pos_size: num of ins of ONE new relation in support set
-        support_neg_rate: num of neg ins in support is support_neg_rate times as pos
-        query_size: num of ins for EACH class in query set
-        query_class: num of classes in query set
-        return: support_pos, support_neg, query, name_of_pos_class
-        '''
-        support_pos = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': []}
-        support_neg = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': [], 'entpair': []}
-
-        # New relation
-        scope = self.rel2scope[target_class]
-        indices = list(range(scope[0], scope[1]))
-        support_pos['word'] = self.data_word[indices]
-        support_pos['pos1'] = self.data_pos1[indices]
-        support_pos['pos2'] = self.data_pos2[indices]
-        support_pos['mask'] = self.data_mask[indices]
-        support_pos['label'] = np.ones((support_pos['word'].shape[0]), dtype=np.int32)
-        support_pos['id'] = indices 
-        support_pos['entpair'] = list(self.data_entpair[indices])
-
-        for rel in self.rel2scope:
-            if rel != target_class:
-                scope = self.rel2scope[rel]
-                indices = list(range(scope[0], scope[1]))
-                support_neg['word'].append(self.data_word[indices])
-                support_neg['pos1'].append(self.data_pos1[indices]) 
-                support_neg['pos2'].append(self.data_pos2[indices])
-                support_neg['mask'].append(self.data_mask[indices])
-
-        support_neg['word'] = np.concatenate(support_neg['word'], 0) 
-        support_neg['pos1'] = np.concatenate(support_neg['pos1'], 0) 
-        support_neg['pos2'] = np.concatenate(support_neg['pos2'], 0) 
-        support_neg['mask'] = np.concatenate(support_neg['mask'], 0) 
-        support_neg['label'] = np.zeros((support_neg['word'].shape[0]), dtype=np.int32)
-       
-        query = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'label': []}
-
-        for class_name in query_data_loader.rel2scope:
-            scope = query_data_loader.rel2scope[class_name]
-            indices = np.random.choice(list(range(scope[0], scope[1])), query_size, False)
-            query['word'].append(query_data_loader.data_word[indices])  
-            query['pos1'].append(query_data_loader.data_pos1[indices])    
-            query['pos2'].append(query_data_loader.data_pos2[indices])    
-            query['mask'].append(query_data_loader.data_mask[indices])
-            if class_name == target_class:
-                query['label'] += [1] * query_size
-            else:
-                query['label'] += [0] * query_size
-
-        query['word'] = np.concatenate(query['word'], 0)
-        query['pos1'] = np.concatenate(query['pos1'], 0)
-        query['pos2'] = np.concatenate(query['pos2'], 0)
-        query['mask'] = np.concatenate(query['mask'], 0)
-        query['label'] = np.array(query['label'])
-
-        query['word'] = Variable(torch.from_numpy(query['word']).long()) 
-        query['pos1'] = Variable(torch.from_numpy(query['pos1']).long())
-        query['pos2'] = Variable(torch.from_numpy(query['pos2']).long())
-        query['mask'] = Variable(torch.from_numpy(query['mask']).long())
-        query['label'] = Variable(torch.from_numpy(query['label']).long())
-
-        support_pos['word'] = Variable(torch.from_numpy(support_pos['word']).long()) 
-        support_pos['pos1'] = Variable(torch.from_numpy(support_pos['pos1']).long())
-        support_pos['pos2'] = Variable(torch.from_numpy(support_pos['pos2']).long())
-        support_pos['mask'] = Variable(torch.from_numpy(support_pos['mask']).long())
-        support_neg['word'] = Variable(torch.from_numpy(support_neg['word']).long()) 
-        support_neg['pos1'] = Variable(torch.from_numpy(support_neg['pos1']).long())
-        support_neg['pos2'] = Variable(torch.from_numpy(support_neg['pos2']).long())
-        support_neg['mask'] = Variable(torch.from_numpy(support_neg['mask']).long())
-
-        support_pos['label'] = Variable(torch.from_numpy(support_pos['label']).long())
-        support_neg['label'] = Variable(torch.from_numpy(support_neg['label']).long())
-
-        # To cuda
-        if self.cuda:
-            for key in ['word', 'pos1', 'pos2', 'mask', 'label']:
-                support_pos[key] = support_pos[key].cuda()
-                support_neg[key] = support_neg[key].cuda()
-                query[key] = query[key].cuda()
-
-        return support_pos, support_neg, query
 
     def get_selected(self, train_data_loader, support_pos_size, support_neg_rate, query_size, query_class, main_class, use_train_neg=False, neg_train_loader=None):
         '''
@@ -784,10 +496,9 @@ class JSONFileDataLoader(FileDataLoader):
         support_pos1, query_pos1, _ = np.split(self.data_pos1[indices], [support_pos_size, support_pos_size + query_size])
         support_pos2, query_pos2, _ = np.split(self.data_pos2[indices], [support_pos_size, support_pos_size + query_size])
         support_mask, query_mask, _ = np.split(self.data_mask[indices], [support_pos_size, support_pos_size + query_size])
-        support_id = list(indices[:support_pos_size])
+        support_id, query_id, _ = np.split(self.uid[indices], [support_pos_size, support_pos_size + query_size])
         support_entpair = list(self.data_entpair[indices[:support_pos_size]])
         query['entpair'] += list(self.data_entpair[indices[support_pos_size:]])
-        query['id'] += list(indices[support_pos_size:])
 
         # support_neg = train_data_loader.next_batch(support_pos_size * support_neg_rate)
         # support_neg['label'] = np.zeros((support_neg_rate * support_pos_size), dtype=np.int32)
@@ -800,12 +511,14 @@ class JSONFileDataLoader(FileDataLoader):
             support_neg['pos1'].append(neg_train_loader.data_pos1[scope[0]:scope[0]+support_pos_size])    
             support_neg['pos2'].append(neg_train_loader.data_pos2[scope[0]:scope[0]+support_pos_size])    
             support_neg['mask'].append(neg_train_loader.data_mask[scope[0]:scope[0]+support_pos_size])
+            support_neg['id'].append(neg_train_loader.uid[scope[0]:scope[0]+support_pos_size])
             support_neg['label'] += [0] * support_pos_size
 
         support_neg['word'] = np.concatenate(support_neg['word'], 0)
         support_neg['pos1'] = np.concatenate(support_neg['pos1'], 0)
         support_neg['pos2'] = np.concatenate(support_neg['pos2'], 0)
         support_neg['mask'] = np.concatenate(support_neg['mask'], 0)
+        support_neg['id'] = np.concatenate(support_neg['id'], 0)
         support_neg['label'] = np.array(support_neg['label'])
 
         support_pos['word'] = support_word
@@ -820,6 +533,7 @@ class JSONFileDataLoader(FileDataLoader):
         query['pos1'].append(query_pos1) 
         query['pos2'].append(query_pos2)
         query['mask'].append(query_mask)
+        query['id'].append(query_id)
         query['label'] += [1] * query_size
 
         # Other query classes (negative)
@@ -837,40 +551,134 @@ class JSONFileDataLoader(FileDataLoader):
             query['pos1'].append(neg_loader.data_pos1[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])    
             query['pos2'].append(neg_loader.data_pos2[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])    
             query['mask'].append(neg_loader.data_mask[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])
+            query['id'].append(neg_loader.uid[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])
             query['label'] += [0] * query_size
             query['entpair'] += list(neg_loader.data_entpair[scope[0]+support_pos_size:scope[0]+support_pos_size+query_size])
-            query['id'] += list(range(scope[0]+support_pos_size, scope[0]+support_pos_size+query_size))
 
         query['word'] = np.concatenate(query['word'], 0)
         query['pos1'] = np.concatenate(query['pos1'], 0)
         query['pos2'] = np.concatenate(query['pos2'], 0)
         query['mask'] = np.concatenate(query['mask'], 0)
+        query['id'] = np.concatenate(query['id'], 0)
         query['label'] = np.array(query['label'])
 
         support_pos['word'] = Variable(torch.from_numpy(support_pos['word']).long()) 
         support_pos['pos1'] = Variable(torch.from_numpy(support_pos['pos1']).long())
         support_pos['pos2'] = Variable(torch.from_numpy(support_pos['pos2']).long())
         support_pos['mask'] = Variable(torch.from_numpy(support_pos['mask']).long())
+        support_pos['id'] = Variable(torch.from_numpy(support_pos['id']).long())
         support_pos['label'] = Variable(torch.from_numpy(support_pos['label']).long())
 
         support_neg['word'] = Variable(torch.from_numpy(support_neg['word']).long()) 
         support_neg['pos1'] = Variable(torch.from_numpy(support_neg['pos1']).long())
         support_neg['pos2'] = Variable(torch.from_numpy(support_neg['pos2']).long())
         support_neg['mask'] = Variable(torch.from_numpy(support_neg['mask']).long())
+        support_neg['id'] = Variable(torch.from_numpy(support_neg['id']).long())
         support_neg['label'] = Variable(torch.from_numpy(support_neg['label']).long())
 
         query['word'] = Variable(torch.from_numpy(query['word']).long()) 
         query['pos1'] = Variable(torch.from_numpy(query['pos1']).long())
         query['pos2'] = Variable(torch.from_numpy(query['pos2']).long())
         query['mask'] = Variable(torch.from_numpy(query['mask']).long())
+        query['id'] = Variable(torch.from_numpy(query['id']).long())
         query['label'] = Variable(torch.from_numpy(query['label']).long())
 
         # To cuda
         if self.cuda:
-            for key in ['word', 'pos1', 'pos2', 'mask', 'label']:
+            for key in ['word', 'pos1', 'pos2', 'mask', 'label', 'id']:
                 support_pos[key] = support_pos[key].cuda()
                 support_neg[key] = support_neg[key].cuda()
                 query[key] = query[key].cuda()
 
         return support_pos, support_neg, query, main_class
 
+    def next_fewshot_one(self, N, K, Q):
+        target_classes = random.sample(self.rel2scope.keys(), N)
+        support_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': []}
+        query_set = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': []}
+        query_label = []
+
+        for i, class_name in enumerate(target_classes):
+            scope = self.rel2scope[class_name]
+            indices = np.random.choice(list(range(scope[0], scope[1])), K + Q, False)
+            word = self.data_word[indices]
+            pos1 = self.data_pos1[indices]
+            pos2 = self.data_pos2[indices]
+            mask = self.data_mask[indices]
+            id = self.uid[indices]
+            support_word, query_word, _ = np.split(word, [K, K + Q])
+            support_pos1, query_pos1, _ = np.split(pos1, [K, K + Q])
+            support_pos2, query_pos2, _ = np.split(pos2, [K, K + Q])
+            support_mask, query_mask, _ = np.split(mask, [K, K + Q])
+            support_id, query_id, _ = np.split(id, [K, K + Q])
+            support_set['word'].append(support_word)
+            support_set['pos1'].append(support_pos1)
+            support_set['pos2'].append(support_pos2)
+            support_set['mask'].append(support_mask)
+            support_set['id'].append(support_id)
+            query_set['word'].append(query_word)
+            query_set['pos1'].append(query_pos1)
+            query_set['pos2'].append(query_pos2)
+            query_set['mask'].append(query_mask)
+            query_set['id'].append(query_id)
+            query_label += [i] * Q
+
+        support_set['word'] = np.stack(support_set['word'], 0)
+        support_set['pos1'] = np.stack(support_set['pos1'], 0)
+        support_set['pos2'] = np.stack(support_set['pos2'], 0)
+        support_set['mask'] = np.stack(support_set['mask'], 0)
+        support_set['id'] = np.stack(support_set['id'], 0)
+        query_set['word'] = np.concatenate(query_set['word'], 0)
+        query_set['pos1'] = np.concatenate(query_set['pos1'], 0)
+        query_set['pos2'] = np.concatenate(query_set['pos2'], 0)
+        query_set['mask'] = np.concatenate(query_set['mask'], 0)
+        query_set['id'] = np.concatenate(query_set['id'], 0)
+        query_label = np.array(query_label)
+
+        perm = np.random.permutation(N * Q)
+        query_set['word'] = query_set['word'][perm]
+        query_set['pos1'] = query_set['pos1'][perm]
+        query_set['pos2'] = query_set['pos2'][perm]
+        query_set['mask'] = query_set['mask'][perm]
+        query_set['id'] = query_set['id'][perm]
+        query_label = query_label[perm]
+
+        return support_set, query_set, query_label
+
+    def next_fewshot_batch(self, B, N, K, Q):
+        support = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': []}
+        query = {'word': [], 'pos1': [], 'pos2': [], 'mask': [], 'id': []}
+        label = []
+        for one_sample in range(B):
+            current_support, current_query, current_label = self.next_one(N, K, Q)
+            support['word'].append(current_support['word'])
+            support['pos1'].append(current_support['pos1'])
+            support['pos2'].append(current_support['pos2'])
+            support['mask'].append(current_support['mask'])
+            support['id'].append(current_support['id'])
+            query['word'].append(current_query['word'])
+            query['pos1'].append(current_query['pos1'])
+            query['pos2'].append(current_query['pos2'])
+            query['id'].append(current_query['id'])
+            label.append(current_label)
+        support['word'] = Variable(torch.from_numpy(np.stack(support['word'], 0)).long().view(-1, self.max_length))
+        support['pos1'] = Variable(torch.from_numpy(np.stack(support['pos1'], 0)).long().view(-1, self.max_length)) 
+        support['pos2'] = Variable(torch.from_numpy(np.stack(support['pos2'], 0)).long().view(-1, self.max_length)) 
+        support['mask'] = Variable(torch.from_numpy(np.stack(support['mask'], 0)).long().view(-1, self.max_length)) 
+        support['id'] = Variable(torch.from_numpy(np.stack(support['id'], 0)).long().view(-1, self.max_length)) 
+        query['word'] = Variable(torch.from_numpy(np.stack(query['word'], 0)).long().view(-1, self.max_length)) 
+        query['pos1'] = Variable(torch.from_numpy(np.stack(query['pos1'], 0)).long().view(-1, self.max_length)) 
+        query['pos2'] = Variable(torch.from_numpy(np.stack(query['pos2'], 0)).long().view(-1, self.max_length)) 
+        query['mask'] = Variable(torch.from_numpy(np.stack(query['mask'], 0)).long().view(-1, self.max_length)) 
+        query['id'] = Variable(torch.from_numpy(np.stack(query['id'], 0)).long().view(-1, self.max_length)) 
+        label = Variable(torch.from_numpy(np.stack(label, 0).astype(np.int64)).long())
+        
+        # To cuda
+        if self.cuda:
+            for key in support:
+                support[key] = support[key].cuda()
+            for key in query:
+                query[key] = query[key].cuda()
+            label = label.cuda()
+
+        return support, query, label
