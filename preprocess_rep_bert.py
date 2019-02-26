@@ -11,7 +11,7 @@ import numpy as np
 def get_repre(model, data_loader, save_path):
     print('repre save to ' + save_path)
     repre = []
-    batch_size = 64
+    batch_size = 32
     total_step = data_loader.instance_tot // batch_size
     if data_loader.instance_tot % batch_size != 0:
         total_step += 1

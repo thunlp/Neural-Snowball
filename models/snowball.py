@@ -162,6 +162,7 @@ class Snowball(nrekit.framework.Model):
 
         # print
         self.parser.add_argument("--print_debug", help="print debug information", action="store_true")
+        self.parser.add_argument("--eval", help="eval during snowball", action="store_true")
 
         self.args = self.parser.parse_args()
 
@@ -197,7 +198,7 @@ class Snowball(nrekit.framework.Model):
         self._accuracy = self.__accuracy__(pred, data['label'])
         self._pred = pred
     
-    def forward_baseline(self, support_pos, support_neg, query, threshold=0.5):
+    def forward_baseline(self, support_pos, query, threshold=0.5):
         '''
         baseline model
         support_pos: positive support set
@@ -205,21 +206,13 @@ class Snowball(nrekit.framework.Model):
         query: query set
         threshold: ins whose prob > threshold are predicted as positive
         '''
-        # concat
-        support = {}
-        support['word'] = torch.cat([support_pos['word'], support_neg['word']], 0)
-        if 'pos1' in support_pos:
-            support['pos1'] = torch.cat([support_pos['pos1'], support_neg['pos1']], 0)
-            support['pos2'] = torch.cat([support_pos['pos2'], support_neg['pos2']], 0)
-        support['mask'] = torch.cat([support_pos['mask'], support_neg['mask']], 0)
-        support['label'] = torch.cat([support_pos['label'], support_neg['label']], 0)
         
         # train
         self._train_finetune_init()
         # support_rep = self.encode(support, self.args.infer_batch_size)
         support_pos_rep = self.encode(support_pos, self.args.infer_batch_size)
         # self._train_finetune(support_rep, support['label'])
-        self._train_finetune(support_pos_rep, support['label'])
+        self._train_finetune(support_pos_rep)
 
         
         # test
@@ -300,7 +293,7 @@ class Snowball(nrekit.framework.Model):
         self.new_W = self.new_W.cuda()
         self.new_bias = self.new_bias.cuda()
 
-    def _train_finetune(self, data_repre, label, learning_rate=None, weight_decay=1e-5):
+    def _train_finetune(self, data_repre, learning_rate=None, weight_decay=1e-5):
         '''
         train finetune classifier with given data
         data_repre: sentence representation (encoder's output)
@@ -443,7 +436,7 @@ class Snowball(nrekit.framework.Model):
         x = torch.sigmoid(x)
         return x.view(-1)
 
-    def _forward_train(self, support_pos, support_neg, query, distant, threshold=0.5):
+    def _forward_train(self, support_pos, query, distant, threshold=0.5):
         '''
         snowball process (train)
         support_pos: support set (positive, raw data)
@@ -468,14 +461,14 @@ class Snowball(nrekit.framework.Model):
         sort_ori_threshold = self.args.phase2_cl_th
 
         # get neg representations with sentence encoder
-        support_neg_rep = self.encode(support_neg, batch_size=self.args.infer_batch_size)
+        # support_neg_rep = self.encode(support_neg, batch_size=self.args.infer_batch_size)
         
         # init
         self._train_finetune_init()
         # support_rep = self.encode(support, self.args.infer_batch_size)
         support_pos_rep = self.encode(support_pos, self.args.infer_batch_size)
         # self._train_finetune(support_rep, support['label'])
-        self._train_finetune(support_pos_rep, support_pos['label'])
+        self._train_finetune(support_pos_rep)
 
         self._metric = []
 
@@ -578,14 +571,15 @@ class Snowball(nrekit.framework.Model):
             # print('---')
 
             support_pos_rep = self.encode(support_pos, batch_size=self.args.infer_batch_size)
-            support_rep = torch.cat([support_pos_rep, support_neg_rep], 0)
-            support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
+            # support_rep = torch.cat([support_pos_rep, support_neg_rep], 0)
+            # support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
             
             ## finetune
             # print("Fine-tune Init")
             self._train_finetune_init()
-            self._train_finetune(support_pos_rep, support_label)
-            self._forward_eval_binary(query, threshold)
+            self._train_finetune(support_pos_rep)
+            if self.args.eval:
+                self._forward_eval_binary(query, threshold)
             # self._metric.append(np.array([self._f1, self._prec, self._recall]))
             if self.args.print_debug:
                 print('\nphase1 add {} ins / {}'.format(self._phase1_add_num, self._phase1_total))
@@ -622,17 +616,22 @@ class Snowball(nrekit.framework.Model):
 
             ## build new support set
             support_pos_rep = self.encode(support_pos, self.args.infer_batch_size)
-            support_rep = torch.cat([support_pos_rep, support_neg_rep], 0)
-            support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
+            # support_rep = torch.cat([support_pos_rep, support_neg_rep], 0)
+            # support_label = torch.cat([support_pos['label'], support_neg['label']], 0)
 
             ## finetune
             # print("Fine-tune Init")
             self._train_finetune_init()
-            self._train_finetune(support_pos_rep, support_label)
-            self._forward_eval_binary(query, threshold)
-            self._metric.append(np.array([self._f1, self._prec, self._recall]))
-            if self.args.print_debug:
-                print('\nphase2 add {} ins / {}'.format(self._phase2_add_num, self._phase2_total))
+            self._train_finetune(support_pos_rep)
+            if self.args.eval:
+                self._forward_eval_binary(query, threshold)
+                self._metric.append(np.array([self._f1, self._prec, self._recall]))
+                if self.args.print_debug:
+                    print('\nphase2 add {} ins / {}'.format(self._phase2_add_num, self._phase2_total))
+
+        self._forward_eval_binary(query, threshold)
+        if self.args.print_debug:
+            print('\nphase2 add {} ins / {}'.format(self._phase2_add_num, self._phase2_total))
 
         return support_pos_rep
 
@@ -667,7 +666,7 @@ class Snowball(nrekit.framework.Model):
         self._f1 = f1
         return (accuracy, precision, recall, f1, auc)
 
-    def forward(self, support_pos, support_neg, query, distant, pos_class, threshold=0.5, threshold_for_snowball=0.5):
+    def forward(self, support_pos, query, distant, pos_class, threshold=0.5, threshold_for_snowball=0.5):
         '''
         snowball process (train + eval)
         support_pos: support set (positive, raw data)
@@ -680,7 +679,7 @@ class Snowball(nrekit.framework.Model):
         '''
         self.pos_class = pos_class 
 
-        self._forward_train(support_pos, support_neg, query, distant, threshold=threshold)
+        self._forward_train(support_pos, query, distant, threshold=threshold)
 
     def init_10shot(self, Ws, bs):
         self.Ws = torch.stack(Ws, 0).transpose(0, 1) # (230, 16)

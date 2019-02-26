@@ -464,7 +464,8 @@ class Framework:
             eval_iter=2000,
             ckpt=None,
             is_model2=False,
-            threshold=0.5):
+            threshold=0.5,
+            query_train=True, query_val=True):
         '''
         model: a FewShotREModel instance
         B: Batch size
@@ -494,9 +495,10 @@ class Framework:
         iter_brecall = 0.0
         snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32) ]
         for it in range(eval_iter):
-            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=True, neg_train_loader=self.neg_train_loader)
-            model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
-            model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold)
+            # support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=True, neg_train_loader=self.neg_train_loader)
+            support_pos, query, pos_class = eval_dataset.sample_for_eval(self.train_data_loader, support_size, query_size, query_train=query_train, query_val=query_val)
+            model.forward_baseline(support_pos, query, threshold=threshold)
+            model.forward(support_pos, query, eval_distant_dataset, pos_class, threshold=threshold)
 
             iter_bright += model._baseline_f1
             iter_bprec += model._baseline_prec
@@ -510,13 +512,15 @@ class Framework:
             sys.stdout.write('[EVAL] step: {0:4} | f1: {1:1.4f}, prec: {2:3.2f}%, recall: {3:3.2f}% | [baseline] f1: {4:1.4f}, prec: {5:3.2f}%, rec: {6:3.2f}%'.format(it + 1, iter_right / iter_sample, 100 * iter_prec / iter_sample, 100 * iter_recall / iter_sample, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample) +'\r')
             sys.stdout.flush()
             
-            # if model.args.print_debug:
-            print("")
-            print("[SNOWBALL ITER RESULT:]")
-            for i in range(len(model._metric)):
-                snowball_metric[i] += model._metric[i]
-                print("iter {} : {}".format(i, snowball_metric[i] / iter_sample))
-        return iter_right / iter_sample
+            if model.args.eval:
+                print("")
+                print("[SNOWBALL ITER RESULT:]")
+                for i in range(len(model._metric)):
+                    snowball_metric[i] += model._metric[i]
+                    print("iter {} : {}".format(i, snowball_metric[i] / iter_sample))
+
+        res = "{} {} {} {} {} {}".format(iter_bright / iter_sample, iter_bprec / iter_sample, iter_brecall / iter_sample, iter_right / iter_sample, iter_prec / iter_sample, iter_recall / iter_sample)
+        return res
 
     def eval_fewshot(self,
             model,
