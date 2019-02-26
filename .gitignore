@@ -117,3 +117,4 @@ checkpoint
 log
 
 *.txt
+exp*
