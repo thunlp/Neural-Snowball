@@ -46,8 +46,8 @@ encoder.load_state_dict(ckpt_encoder)
 encoder.cuda()
 encoder.eval()
 
-# for data_loader, name in [(train_train_data_loader, 'train_train'), (train_val_data_loader, 'train_val'), (val_data_loader, 'val'), (test_data_loader, 'test'), (distant, 'distant')]:
-#     get_repre(encoder, data_loader, './_repre/' + 'bert_encoder_on_fewrel.' + name + '.npy')
+for data_loader, name in [(train_train_data_loader, 'train_train'), (train_val_data_loader, 'train_val'), (val_data_loader, 'val'), (test_data_loader, 'test'), (distant, 'distant')]:
+    get_repre(encoder, data_loader, './_repre_split/' + 'bert_encoder_on_fewrel.' + name + '.npy')
 
 siamese = nrekit.sentence_encoder.BERTSentenceEncoder('./data/bert-base-uncased')
 ckpt_siamese = {}
@@ -59,6 +59,6 @@ siamese.cuda()
 siamese.eval()
 
 for data_loader, name in [(train_train_data_loader, 'train_train'), (train_val_data_loader, 'train_val'), (val_data_loader, 'val'), (test_data_loader, 'test'), (distant, 'distant')]:
-    get_repre(siamese, data_loader, './_repre/' + 'bert_siamese_on_fewrel.' + name + '.npy')
+    get_repre(siamese, data_loader, './_repre_split/' + 'bert_siamese_on_fewrel.' + name + '.npy')
 
 

@@ -1,6 +1,6 @@
 import numpy as np
 
-for encoder in ['cnn']:
+for encoder in ['cnn', 'bert']:
     print(encoder)
     for module in ['encoder', 'siamese']:
         print(module)

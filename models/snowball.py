@@ -156,6 +156,7 @@ class Snowball(nrekit.framework.Model):
         self.parser.add_argument("--finetune_batch_size", help="batch size when finetune", type=int, default=10)
         self.parser.add_argument("--finetune_lr", help="learning rate when finetune", type=float, default=0.05)
         self.parser.add_argument("--finetune_wd", help="weight decay rate when finetune", type=float, default=1e-5)
+        self.parser.add_argument("--finetune_weight", help="loss weight of negative samples", type=float, default=0.2)
         
         # inference batch_size
         self.parser.add_argument("--infer_batch_size", help="batch size when inference", type=int, default=0)
@@ -299,6 +300,8 @@ class Snowball(nrekit.framework.Model):
         data_repre: sentence representation (encoder's output)
         label: label
         '''
+        
+        self.train()
 
         optimizer = self.optimizer
         if learning_rate is not None:
@@ -307,7 +310,7 @@ class Snowball(nrekit.framework.Model):
         # hyperparameters
         max_epoch = self.args.finetune_epoch
         batch_size = self.args.finetune_batch_size
-
+        
         # dropout
         data_repre = self.drop(data_repre) 
         
@@ -339,7 +342,7 @@ class Snowball(nrekit.framework.Model):
 
                 # iter_loss = self.__loss__(x, batch_label.float()).mean()
                 weight = torch.ones(batch_label.size(0)).float().cuda()
-                weight[batch_label == 0] = 1 / float(max_epoch)
+                weight[batch_label == 0] = self.args.finetune_weight #1 / float(max_epoch)
                 iter_loss = (self.__loss__(x, batch_label.float()) * weight).mean()
 
                 optimizer.zero_grad()
@@ -348,6 +351,7 @@ class Snowball(nrekit.framework.Model):
                 if self.args.print_debug:
                     sys.stdout.write('[snowball finetune] epoch {0:4} iter {1:4} | loss: {2:2.6f}'.format(epoch, i, iter_loss) + '\r')
                     sys.stdout.flush()
+        self.eval()
 
     def _add_ins_to_data(self, dataset_dst, dataset_src, ins_id, label=None):
         '''

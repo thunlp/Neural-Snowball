@@ -405,7 +405,7 @@ class Framework:
 
     def eval_baseline(self,
             model,
-            support_size=10, query_size=50, unlabelled_size=50, query_class=5,
+            support_size=10, query_size=50, unlabelled_size=50,
             s_num_size=10, s_num_class=10,
             eval_iter=2000,
             ckpt=None,
@@ -440,8 +440,11 @@ class Framework:
         iter_brecall = 0.0
         snowball_metric = [np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32), np.zeros([3], dtype=np.float32) ]
         for it in range(eval_iter):
-            support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=True, neg_train_loader=self.neg_train_loader)
-            model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
+            support_pos, query, pos_class = eval_dataset.sample_for_eval(self.train_data_loader, support_size, query_size)
+            model.forward_baseline(support_pos, query, threshold=threshold)
+
+            # support_pos, support_neg, query, pos_class = eval_dataset.get_one_new_relation(self.train_data_loader, support_size, 10, query_size, query_class, use_train_neg=True, neg_train_loader=self.neg_train_loader)
+            # model.forward_baseline(support_pos, support_neg, query, threshold=threshold)
             # model.forward(support_pos, support_neg, query, eval_distant_dataset, pos_class, threshold=threshold)
 
             iter_bright += model._baseline_f1
@@ -456,12 +459,11 @@ class Framework:
         return '[EVAL] step: {0:4} | [baseline] f1: {1:1.4f}, prec: {2:3.2f}%, rec: {3:3.2f}%'.format(it + 1, iter_bright / iter_sample, 100 * iter_bprec / iter_sample, 100 * iter_brecall / iter_sample)
        #  return iter_right / iter_sample
 
-
     def eval(self,
             model,
             support_size=10, query_size=50, unlabelled_size=50, query_class=5,
             s_num_size=10, s_num_class=10,
-            eval_iter=2000,
+            eval_iter=100,
             ckpt=None,
             is_model2=False,
             threshold=0.5,
@@ -477,7 +479,7 @@ class Framework:
         return: Accuracy
         '''
         print("")
-        # model.eval()
+        model.eval()
         if ckpt is None:
             eval_dataset = self.val_data_loader
         else:
