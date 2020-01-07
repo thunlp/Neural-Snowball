@@ -105,7 +105,6 @@ venv.bak/
 
 # project specific
 
-data
 *swap
 *swp
 _processed_data
@@ -118,3 +117,5 @@ log
 
 *.txt
 exp*
+
+data/distant.json
