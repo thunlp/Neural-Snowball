@@ -4,7 +4,7 @@ Code and dataset of AAAI2020 Paper Neural Snowball for Few-Shot Relation Learnin
 
 ## Dataset
 
-Please download `distant.json` from [Amazon S3](https://gaotianyu.s3.cn-north-1.amazonaws.com.cn/snowball/distant.json) and put it in the `data` folder.
+Please download `distant.json` from [Amazon S3](https://thunlp.s3.cn-north-1.amazonaws.com.cn/neural_snowball/distant.json) and put it in the `data` folder.
 
 ## Citation
 
