@@ -118,4 +118,4 @@ log
 *.txt
 exp*
 
-data/distant.json
+data

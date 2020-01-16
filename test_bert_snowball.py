@@ -9,7 +9,7 @@ import argparse
 max_length = 90
 train_data_loader = DataLoader('./data/train.json', vocab='./data/bert_vocab.txt', max_length=max_length)
 val_data_loader = DataLoader('./data/val.json', vocab='./data/bert_vocab.txt', max_length=max_length)
-test_data_loader = DataLoader('./data/test.json', vocab='./data/bert_vocab.txt', max_length=max_length)
+test_data_loader = DataLoader('./data/val.json', vocab='./data/bert_vocab.txt', max_length=max_length)
 distant = DataLoader('./data/distant.json', vocab='./data/bert_vocab.txt', max_length=max_length, distant=True)
 
 framework = nrekit.framework.Framework(train_data_loader, val_data_loader, test_data_loader, distant)

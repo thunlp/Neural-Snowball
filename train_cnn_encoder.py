@@ -23,5 +23,3 @@ optimizer = optim.SGD(parameters_to_optimize,
         weight_decay=1e-5)
 
 framework.train_encoder_epoch(model, model_name, optimizer=optimizer, batch_size=batch_size, train_epoch=train_epoch)
-
-# framework.train_encoder(model, model_name)
