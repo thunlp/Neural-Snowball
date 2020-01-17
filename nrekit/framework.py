@@ -848,7 +848,6 @@ class SuperviseFramework:
         model.train()
         pred = np.concatenate(pred)
         label = np.concatenate(label)
-        np.save('tacred_test_pred.npy', pred)
         pred = label_binarize(pred, classes=list(range(0, 13)) + list(range(14, self.val_data_loader.rel_tot)))
         label = label_binarize(label, classes=list(range(0, 13)) + list(range(14, self.val_data_loader.rel_tot)))
 
