@@ -130,7 +130,7 @@ class Siamese(nn.Module):
 
 class Snowball(nrekit.framework.Model):
     
-    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230, drop_rate=0.5, weight_table=None, pre_rep=None, neg_loader=None):
+    def __init__(self, sentence_encoder, base_class, siamese_model, hidden_size=230, drop_rate=0.5, weight_table=None, pre_rep=None, neg_loader=None, args=None):
         nrekit.framework.Model.__init__(self, sentence_encoder)
         self.hidden_size = hidden_size
         self.base_class = base_class
@@ -142,30 +142,7 @@ class Snowball(nrekit.framework.Model):
         # self.cost = nn.CrossEntropyLoss()
         self.weight_table = weight_table
         
-        # snowball hyperparameter
-        self.parser.add_argument("--phase1_add_num", help="number of instances added in phase 1", type=int, default=5)
-        self.parser.add_argument("--phase2_add_num", help="number of instances added in phase 2", type=int, default=5)
-        self.parser.add_argument("--phase1_siamese_th", help="threshold of relation siamese network in phase 1", type=float, default=0.5)
-        self.parser.add_argument("--phase2_siamese_th", help="threshold of relation siamese network in phase 2", type=float, default=0.5)
-        self.parser.add_argument("--phase2_cl_th", help="threshold of relation classifier in phase 2", type=float, default=0.9)
-
-        self.parser.add_argument("--snowball_max_iter", help="number of iterations of snowball", type=int, default=5)
-
-        # fine-tune hyperparameter
-        self.parser.add_argument("--finetune_epoch", help="num of epochs when finetune", type=int, default=50)
-        self.parser.add_argument("--finetune_batch_size", help="batch size when finetune", type=int, default=10)
-        self.parser.add_argument("--finetune_lr", help="learning rate when finetune", type=float, default=0.05)
-        self.parser.add_argument("--finetune_wd", help="weight decay rate when finetune", type=float, default=1e-5)
-        self.parser.add_argument("--finetune_weight", help="loss weight of negative samples", type=float, default=0.2)
-        
-        # inference batch_size
-        self.parser.add_argument("--infer_batch_size", help="batch size when inference", type=int, default=0)
-
-        # print
-        self.parser.add_argument("--print_debug", help="print debug information", action="store_true")
-        self.parser.add_argument("--eval", help="eval during snowball", action="store_true")
-
-        self.args = self.parser.parse_args()
+        self.args = args
 
         self.pre_rep = pre_rep
         self.neg_loader = neg_loader
