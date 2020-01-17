@@ -19,11 +19,11 @@ Please cite our paper if you find it helpful.
 
 Please download `data.tar` from [Amazon S3](https://thunlp.s3.cn-north-1.amazonaws.com.cn/neural_snowball/distant.json) and unzip it as the `data` folder:
 
-Note that the test set of FewRel is held for online evaluation, so we do not provide the test set here. You can get almost the same results by using the val set of FewRel.
-
 ```bash
 tar xvf data.tar
 ```
+
+Note that the test set of FewRel is held for online evaluation, so we do not provide the test set here. You can get almost the same results by using the val set of FewRel.
 
 ## Requirements
 
