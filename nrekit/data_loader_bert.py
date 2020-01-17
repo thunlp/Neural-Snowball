@@ -283,6 +283,33 @@ class JSONFileDataLoaderBERT(FileDataLoader):
 
         return batch
 
+    def next_multi_class(self, num_size, num_class):
+        '''
+        num_size: The num of instances for ONE class. The total size is num_size * num_classes.
+        num_class: The num of classes (include the positive class).
+        '''
+        target_classes = random.sample(self.rel2scope.keys(), num_class)
+        batch = {'word': [], 'mask': []}
+
+        for i, class_name in enumerate(target_classes):
+            scope = self.rel2scope[class_name]
+            indices = np.random.choice(list(range(scope[0], scope[1])), num_size, False)
+            batch['word'].append(self.data_word[indices])
+            batch['mask'].append(self.data_mask[indices])
+
+        batch['word'] = np.concatenate(batch['word'], 0)
+        batch['mask'] = np.concatenate(batch['mask'], 0)
+
+        batch['word'] = Variable(torch.from_numpy(batch['word']).long()) 
+        batch['mask'] = Variable(torch.from_numpy(batch['mask']).long())
+
+        # To cuda
+        if self.cuda:
+            for key in batch:
+                batch[key] = batch[key].cuda()
+
+        return batch
+
     def get_random_candidate(self, pos_class, num_class, num_ins_per_class):
         '''
         random pick some instances for snowball phase 2 with total number num_class (1 pos + num_class-1 neg) * num_ins_per_class

@@ -5,7 +5,7 @@ import math
 from torch import optim
 from . import network
 
-from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+from transformers import BertTokenizer, BertModel, BertForMaskedLM
 
 class CNNSentenceEncoder(nn.Module):
 

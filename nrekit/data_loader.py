@@ -768,3 +768,36 @@ class JSONFileDataLoader(FileDataLoader):
 
         return support_pos, query, target_class
 
+    def next_multi_class(self, num_size, num_class):
+        '''
+        num_size: The num of instances for ONE class. The total size is num_size * num_classes.
+        num_class: The num of classes (include the positive class).
+        '''
+        target_classes = random.sample(self.rel2scope.keys(), num_class)
+        batch = {'word': [], 'pos1': [], 'pos2': [], 'mask': []}
+
+        for i, class_name in enumerate(target_classes):
+            scope = self.rel2scope[class_name]
+            indices = np.random.choice(list(range(scope[0], scope[1])), num_size, False)
+            batch['word'].append(self.data_word[indices])
+            batch['pos1'].append(self.data_pos1[indices])
+            batch['pos2'].append(self.data_pos2[indices])
+            batch['mask'].append(self.data_mask[indices])
+
+        batch['word'] = np.concatenate(batch['word'], 0)
+        batch['pos1'] = np.concatenate(batch['pos1'], 0)
+        batch['pos2'] = np.concatenate(batch['pos2'], 0)
+        batch['mask'] = np.concatenate(batch['mask'], 0)
+
+        batch['word'] = Variable(torch.from_numpy(batch['word']).long()) 
+        batch['pos1'] = Variable(torch.from_numpy(batch['pos1']).long())
+        batch['pos2'] = Variable(torch.from_numpy(batch['pos2']).long())
+        batch['mask'] = Variable(torch.from_numpy(batch['mask']).long())
+
+        # To cuda
+        if self.cuda:
+            for key in batch:
+                batch[key] = batch[key].cuda()
+
+        return batch
+
