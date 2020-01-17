@@ -17,7 +17,7 @@ Please cite our paper if you find it helpful.
 
 ## Dataset
 
-Please download `data.tar` from [Amazon S3](https://thunlp.s3.cn-north-1.amazonaws.com.cn/neural_snowball/distant.json) and unzip it as the `data` folder:
+Please download `data.tar` from [Amazon S3](https://thunlp.s3.cn-north-1.amazonaws.com.cn/neural_snowball/data.tar) and unzip it as the `data` folder:
 
 ```bash
 tar xvf data.tar
