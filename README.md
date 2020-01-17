@@ -1,6 +1,6 @@
 # Neural Snowball for Few-Shot Relation Learning
 
-Code and dataset of AAAI2020 Paper **Neural Snowball for Few-Shot Relation Learning**.
+Code and dataset of AAAI2020 Paper **Neural Snowball for Few-Shot Relation Learning**. [paper](https://arxiv.org/pdf/1908.11007.pdf)
 
 ## Citation
 
