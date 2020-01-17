@@ -11,6 +11,8 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--shot', default=5, type=int, 
         help='Number of seeds')
+parser.add_argument('--eval_iter', default=1000, type=int, 
+        help='Eval iteration')
 args = parser.parse_args()
 
 max_length = 90
@@ -37,7 +39,7 @@ model.cuda()
 model.train()
 model_name = 'bert_snowball'
 
-res = framework.eval(model, support_size=args.shot, query_size=50)
+res = framework.eval(model, support_size=args.shot, query_size=50, eval_iter=args.eval_iter)
 res_file = open('exp_bert_{}shot.txt'.format(args.shot), 'a')
 res_file.write(res + '\n')
 print('\n########## RESULT ##########')
