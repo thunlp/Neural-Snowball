@@ -6,7 +6,7 @@ import random
 import torch
 from torch.autograd import Variable
 
-from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+from transformers import BertTokenizer, BertModel, BertForMaskedLM
 
 class FileDataLoader:
     def next_batch(self, B, N, K, Q):
