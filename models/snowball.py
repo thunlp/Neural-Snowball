@@ -62,28 +62,30 @@ class Siamese(nn.Module):
         self._recall = float(np.logical_and(pred == 1, label == 1).sum()) / float((label == 1).sum() + 1)
 
     def encode(self, dataset, batch_size=0): 
-        if self.pre_rep is not None:
-            return self.pre_rep[dataset['id'].view(-1)] 
+        self.sentence_encoder.eval()
+        with torch.no_grad():
+            if self.pre_rep is not None:
+                return self.pre_rep[dataset['id'].view(-1)] 
 
-        if batch_size == 0:
-            x = self.sentence_encoder(dataset)
-        else:
-            total_length = dataset['word'].size(0)
-            max_iter = total_length // batch_size
-            if total_length % batch_size != 0:
-                max_iter += 1
-            x = []
-            for it in range(max_iter):
-                scope = list(range(batch_size * it, min(batch_size * (it + 1), total_length)))
-                with torch.no_grad():
-                    _ = {'word': dataset['word'][scope], 'mask': dataset['mask'][scope]}
-                    if 'pos1' in dataset:
-                        _['pos1'] = dataset['pos1'][scope]
-                        _['pos2'] = dataset['pos2'][scope]
-                    _x = self.sentence_encoder(_)
-                x.append(_x.detach())
-            x = torch.cat(x, 0)
-        return x
+            if batch_size == 0:
+                x = self.sentence_encoder(dataset)
+            else:
+                total_length = dataset['word'].size(0)
+                max_iter = total_length // batch_size
+                if total_length % batch_size != 0:
+                    max_iter += 1
+                x = []
+                for it in range(max_iter):
+                    scope = list(range(batch_size * it, min(batch_size * (it + 1), total_length)))
+                    with torch.no_grad():
+                        _ = {'word': dataset['word'][scope], 'mask': dataset['mask'][scope]}
+                        if 'pos1' in dataset:
+                            _['pos1'] = dataset['pos1'][scope]
+                            _['pos2'] = dataset['pos2'][scope]
+                        _x = self.sentence_encoder(_)
+                    x.append(_x.detach())
+                x = torch.cat(x, 0)
+            return x
 
     def forward_infer(self, x, y, threshold=0.5, batch_size=0):
         x = self.encode(x, batch_size=batch_size)
@@ -383,28 +385,30 @@ class Snowball(nrekit.framework.Model):
         dataset['id'] = torch.stack(dataset['id'], 0).cuda()
 
     def encode(self, dataset, batch_size=0):
-        if self.pre_rep is not None:
-            return self.pre_rep[dataset['id'].view(-1)]
+        self.sentence_encoder.eval()
+        with torch.no_grad():
+            if self.pre_rep is not None:
+                return self.pre_rep[dataset['id'].view(-1)]
 
-        if batch_size == 0:
-            x = self.sentence_encoder(dataset)
-        else:
-            total_length = dataset['word'].size(0)
-            max_iter = total_length // batch_size
-            if total_length % batch_size != 0:
-                max_iter += 1
-            x = []
-            for it in range(max_iter):
-                scope = list(range(batch_size * it, min(batch_size * (it + 1), total_length)))
-                with torch.no_grad():
-                    _ = {'word': dataset['word'][scope], 'mask': dataset['mask'][scope]}
-                    if 'pos1' in dataset:
-                        _['pos1'] = dataset['pos1'][scope]
-                        _['pos2'] = dataset['pos2'][scope]
-                    _x = self.sentence_encoder(_)
-                x.append(_x.detach())
-            x = torch.cat(x, 0)
-        return x
+            if batch_size == 0:
+                x = self.sentence_encoder(dataset)
+            else:
+                total_length = dataset['word'].size(0)
+                max_iter = total_length // batch_size
+                if total_length % batch_size != 0:
+                    max_iter += 1
+                x = []
+                for it in range(max_iter):
+                    scope = list(range(batch_size * it, min(batch_size * (it + 1), total_length)))
+                    with torch.no_grad():
+                        _ = {'word': dataset['word'][scope], 'mask': dataset['mask'][scope]}
+                        if 'pos1' in dataset:
+                            _['pos1'] = dataset['pos1'][scope]
+                            _['pos2'] = dataset['pos2'][scope]
+                        _x = self.sentence_encoder(_)
+                    x.append(_x.detach())
+                x = torch.cat(x, 0)
+            return x
 
     def _infer(self, dataset, batch_size=0):
         '''
