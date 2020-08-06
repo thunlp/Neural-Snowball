@@ -467,7 +467,7 @@ class Framework:
             ckpt=None,
             is_model2=False,
             threshold=0.5,
-            query_train=True, query_val=True):
+            query_train=False, query_val=True):
         '''
         model: a FewShotREModel instance
         B: Batch size
